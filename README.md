@@ -65,13 +65,35 @@ Builder equivalents: `.binary(path)`, `.bundle_path(path)`, plus `.approot(path)
 
 If you bring your own MCP stack, `Builder::command()` returns a `std::process::Command` preloaded with the canonical launch arguments instead of starting anything.
 
+## Demo app: auditron
+
+The repo ships `auditron`, a terminal compliance copilot built on this crate: point-in-time control checks with auditor-ready evidence packs. Control packs are YAML data under [controls/](controls/); the github pack runs unauthenticated, so it works with zero cloud credentials.
+
+```sh
+cargo run -p auditron -- scan                      # live TUI, github-core pack
+cargo run -p auditron -- scan --no-tui             # line output for CI/pipes
+cargo run -p auditron -- scan --var org=your-org   # point it at your org
+cargo run -p auditron -- evidence --out evidence-2026-06.zip
+```
+
+The TUI streams pass/fail/error per control and always shows the SQL that produced a finding. Select a finding and press `e` to have Claude explain it and draft remediation steps (needs `ANTHROPIC_API_KEY`). The evidence zip contains the run manifest, the exact pack and SQL, and per-control CSVs - re-runnable by an auditor.
+
+auditron is also the single-binary pitch. Build it with the server embedded:
+
+```sh
+BUNDLE=$(cargo run -p stackql-mcp --example fetch_bundle)
+STACKQL_MCP_BUNDLE_FILE=$BUNDLE cargo build -p auditron --features vendored --release
+```
+
+The resulting binary (~80 MB) carries the StackQL server inside and runs on a clean machine with no downloads.
+
 ## Development
 
 ```sh
-cargo test                                          # unit tests
-cargo test --features vendored                      # vendored path
-cargo test --test conformance -- --include-ignored  # downloads the pinned bundle
-cargo fmt --check && cargo clippy --all-targets --all-features -- -D warnings
+cargo test --workspace                              # unit tests
+cargo test -p stackql-mcp --features vendored       # vendored path
+cargo test -p stackql-mcp --test conformance -- --include-ignored  # downloads the pinned bundle
+cargo fmt --check && cargo clippy --workspace --all-targets -- -D warnings
 ```
 
 MSRV: 1.88 (set by rmcp 1.x).

@@ -79,6 +79,50 @@ impl Mode {
     }
 }
 
+/// Download the pinned .mcpb bundle for the host platform into the shared
+/// cache (verified against the baked sha256 pin) and return its path. Skips
+/// the download when a verified copy is already present.
+///
+/// This is the producer side of vendored builds: fetch the bundle once on the
+/// build machine, then embed it with [`include_bundle!`].
+#[cfg(feature = "sidecar")]
+pub fn fetch_bundle() -> Result<PathBuf> {
+    let platform = Platform::detect()?;
+    let pin = pins::pin_for(platform)?;
+    let dest = cache::bin_cache_root()?
+        .join(pins::STACKQL_VERSION)
+        .join(pin.bundle_name);
+    if dest.is_file() && download::sha256_file(&dest)? == pin.sha256 {
+        return Ok(dest);
+    }
+    download::download_verified(&pins::bundle_url(pin), pin.sha256, &dest)?;
+    Ok(dest)
+}
+
+/// Embed the .mcpb bundle named by the compile-time env var
+/// `STACKQL_MCP_BUNDLE_FILE`, for use with `Builder::bundle_bytes` (vendored
+/// feature):
+///
+/// ```ignore
+/// let server = StackqlMcp::builder()
+///     .bundle_bytes(stackql_mcp::include_bundle!())
+///     .start()
+///     .await?;
+/// ```
+///
+/// Build with `STACKQL_MCP_BUNDLE_FILE=/abs/path/to/bundle.mcpb cargo build`.
+/// Pair with [`fetch_bundle`] to produce the bundle.
+#[macro_export]
+macro_rules! include_bundle {
+    () => {
+        include_bytes!(env!(
+            "STACKQL_MCP_BUNDLE_FILE",
+            "set STACKQL_MCP_BUNDLE_FILE to the absolute path of the platform .mcpb bundle \
+             (see stackql_mcp::fetch_bundle)"
+        ))
+    };
+}
+
 /// Entry point. See the crate docs for the full example.
 pub struct StackqlMcp;
 

@@ -17,7 +17,10 @@ jobs:
         with:
           components: rustfmt, clippy
       - run: cargo fmt --check
-      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      # auditron's vendored feature needs a bundle at compile time, so
+      # all-features lint is scoped to the library crate.
+      - run: cargo clippy -p stackql-mcp --all-targets --all-features -- -D warnings
 
   test:
     strategy:
@@ -29,9 +32,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: unit tests (sidecar)
-        run: cargo test
-      - name: unit tests (vendored)
-        run: cargo test --features vendored
+      - name: unit tests (workspace)
+        run: cargo test --workspace
+      - name: unit tests (stackql-mcp vendored)
+        run: cargo test -p stackql-mcp --features vendored
       - name: conformance (downloads the pinned server bundle)
-        run: cargo test --test conformance -- --include-ignored --nocapture
+        run: cargo test -p stackql-mcp --test conformance -- --include-ignored --nocapture
+      - name: vendored single-binary build (auditron)
+        shell: bash
+        run: |
+          BUNDLE=$(cargo run -q -p stackql-mcp --example fetch_bundle)
+          STACKQL_MCP_BUNDLE_FILE=$BUNDLE cargo build -p auditron --features vendored

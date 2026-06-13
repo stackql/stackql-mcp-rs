@@ -1,8 +1,11 @@
+[workspace]
+members = ["auditron"]
+resolver = "3"
+
 [package]
 name = "stackql-mcp"
 version = "0.1.0"
 edition = "2021"
-resolver = "3"
 # Effective MSRV is set by rmcp 1.x (let-chains): 1.88.
 rust-version = "1.88"
 description = "Embedded StackQL MCP server for Rust agentic apps - cloud queries and provisioning over SQL, served over MCP"
@@ -39,3 +42,7 @@ name = "minimal"
 
 [[example]]
 name = "launcher"
+
+[[example]]
+name = "fetch_bundle"
+required-features = ["sidecar"]
