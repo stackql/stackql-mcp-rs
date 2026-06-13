@@ -1,5 +1,9 @@
 # stackql-mcp
 
+[![crates.io](https://img.shields.io/crates/v/stackql-mcp.svg)](https://crates.io/crates/stackql-mcp)
+[![docs.rs](https://docs.rs/stackql-mcp/badge.svg)](https://docs.rs/stackql-mcp)
+[![ci](https://github.com/stackql/stackql-mcp-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/stackql/stackql-mcp-rs/actions/workflows/ci.yml)
+
 Embedded [StackQL](https://stackql.io) MCP server for Rust agentic apps. StackQL exposes cloud providers (AWS, GitHub, Google, Azure, and more) as SQL tables; this crate acquires the `stackql` binary, launches it as an MCP server over stdio, and hands you a connected [rmcp](https://crates.io/crates/rmcp) client.
 
 ## Quickstart

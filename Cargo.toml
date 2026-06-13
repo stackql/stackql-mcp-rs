@@ -12,9 +12,13 @@ description = "Embedded StackQL MCP server for Rust agentic apps - cloud queries
 license = "MIT"
 repository = "https://github.com/stackql/stackql-mcp-rs"
 documentation = "https://docs.rs/stackql-mcp"
+readme = "README.md"
 keywords = ["mcp", "stackql", "sql", "cloud", "agents"]
 categories = ["api-bindings", "development-tools"]
-exclude = [".github/", "CLAUDE.md"]
+exclude = [".github/", "CLAUDE.md", "auditron/", "controls/", "pr.md"]
+
+[package.metadata.docs.rs]
+all-features = true
 
 [features]
 default = ["sidecar"]
