@@ -57,10 +57,23 @@ pub fn extract_bundle<R: Read + Seek>(reader: R, dest: &Path) -> Result<PathBuf>
     }
 
     let result = extract_into(reader, &tmp).and_then(|entry| {
+        // We only reach here when `dest` was not a valid cache at entry. If
+        // something already occupies `dest`, it is either a valid cache a
+        // concurrent extractor just produced (use it) or a stale/partial dir
+        // from an interrupted run (replace it). Without this, `rename` fails
+        // with ENOTEMPTY on a non-empty `dest` and the binary is bricked until
+        // the cache is cleared by hand.
+        if dest.exists() {
+            if let Some(binary) = cached_binary(dest) {
+                let _ = fs::remove_dir_all(&tmp);
+                return Ok(binary);
+            }
+            fs::remove_dir_all(dest)?;
+        }
         match fs::rename(&tmp, dest) {
             Ok(()) => {}
             Err(_) if cached_binary(dest).is_some() => {
-                // Another process won the race; its copy is valid.
+                // A concurrent extractor won the race; its copy is valid.
                 let _ = fs::remove_dir_all(&tmp);
             }
             Err(e) => return Err(Error::Io(e)),
@@ -155,6 +168,27 @@ mod tests {
         // Second call is a cache hit.
         let again = extract_bundle(Cursor::new(fake_bundle("server/stackql")), &dest).unwrap();
         assert_eq!(again, binary);
+        fs::remove_dir_all(dest.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn replaces_a_stale_invalid_cache_dir() {
+        // A non-empty `dest` that is not a valid cached bundle (e.g. left by an
+        // interrupted extraction) must be replaced, not cause ENOTEMPTY.
+        let dest = temp_dest("stale");
+        fs::create_dir_all(dest.join("server")).unwrap();
+        fs::write(dest.join("partial.tmp"), b"junk").unwrap();
+        assert!(
+            cached_binary(&dest).is_none(),
+            "precondition: dest is invalid"
+        );
+
+        let binary = extract_bundle(Cursor::new(fake_bundle("server/stackql")), &dest).unwrap();
+        assert!(binary.is_file());
+        assert!(
+            !dest.join("partial.tmp").exists(),
+            "stale contents should be gone"
+        );
         fs::remove_dir_all(dest.parent().unwrap()).unwrap();
     }
 

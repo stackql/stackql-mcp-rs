@@ -91,6 +91,18 @@ STACKQL_MCP_BUNDLE_FILE=$BUNDLE cargo build -p auditron --features vendored --re
 
 The resulting binary (~80 MB) carries the StackQL server inside and runs on a clean machine with no downloads.
 
+## Demo app: stackql-agent
+
+[stackql-agent](stackql-agent) is the agentic companion: it embeds this crate and wires the StackQL MCP tools into a [rig](https://docs.rig.rs) agent. One binary becomes a platform-engineering, SRE, or audit agent by swapping a system prompt - the backend and the read-only contract are identical across all three.
+
+```sh
+export ANTHROPIC_API_KEY=sk-ant-...
+cargo run -p stackql-agent -- --persona platform   # also: sre, audit
+cargo run -p stackql-agent -- --check              # pre-flight, no model calls
+```
+
+It runs against public GitHub data with zero cloud credentials; point `--auth` at a credentialed provider for IGA, CSPM, FinOps, and AWS/Google/Azure. The integration is about ten lines: `server.list_all_tools()` plus `server.peer()` feed straight into rig's `rmcp_tools()`.
+
 ## Development
 
 ```sh

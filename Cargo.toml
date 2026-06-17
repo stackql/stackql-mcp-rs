@@ -1,5 +1,5 @@
 [workspace]
-members = ["auditron"]
+members = ["auditron", "stackql-agent"]
 resolver = "3"
 
 [package]
