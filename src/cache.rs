@@ -38,6 +38,7 @@ pub fn bin_cache_root() -> Result<PathBuf> {
 
 /// Cache directory for one extracted bundle:
 /// `<home>/.stackql/mcp-server-bin/<version>/<platform-key>/`.
+#[cfg_attr(not(feature = "sidecar"), allow(dead_code))]
 pub fn bundle_cache_dir(version: &str, platform_key: &str) -> Result<PathBuf> {
     Ok(bin_cache_root()?.join(version).join(platform_key))
 }

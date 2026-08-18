@@ -14,7 +14,8 @@ pub enum Error {
     NoHomeDir,
     /// Downloading the bundle failed.
     Http { url: String, message: String },
-    /// The downloaded bundle did not match the sha256 pin baked into the crate.
+    /// The downloaded bundle did not match its expected sha256 (the pin baked
+    /// into the crate, or the release's published .sha256 asset).
     ChecksumMismatch {
         bundle: String,
         expected: String,

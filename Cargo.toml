@@ -1,10 +1,10 @@
 [workspace]
-members = ["auditron"]
+members = ["auditron", "stackql-agent"]
 resolver = "3"
 
 [package]
 name = "stackql-mcp"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 # Effective MSRV is set by rmcp 1.x (let-chains): 1.88.
 rust-version = "1.88"
@@ -22,8 +22,9 @@ all-features = true
 
 [features]
 default = ["sidecar"]
-# Download the platform .mcpb bundle at first run, verify it against the
-# sha256 pins baked into the crate, and cache it under ~/.stackql.
+# Resolve the latest stackql release, download the platform .mcpb bundle at
+# first run, verify its sha256 (release .sha256 asset, or the pins baked into
+# the crate for BundleVersion::Pinned), and cache it under ~/.stackql.
 sidecar = ["dep:ureq"]
 # Caller embeds the .mcpb with include_bytes! and the crate extracts it on
 # first run - no network at runtime.

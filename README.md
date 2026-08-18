@@ -31,7 +31,7 @@ Run it: `cargo run --example minimal`. The github provider in `null_auth` mode n
 
 Two ways to get the server binary, both behind the same API:
 
-- sidecar (default feature): downloads the platform's `.mcpb` bundle at first run, verifies its sha256 against pins baked into the crate, and caches it. Subsequent starts are offline.
+- sidecar (default feature): resolves the latest stackql release at start-up, downloads the platform's `.mcpb` bundle on first use of that release, verifies its sha256 against the release's published `.sha256` asset, and caches it. Pin a release with `.version(BundleVersion::Pinned)` (the release whose pins are baked into the crate, verified offline) or `.version(BundleVersion::Exact("0.10.601".into()))`; `STACKQL_MCP_VERSION=latest|pinned|<version>` overrides. If the latest release cannot be resolved (offline), the newest cached release is used, then the pinned one.
 - vendored (`vendored` feature): embed the bundle in your binary and extract it on first run - no network at runtime, a single shippable binary:
 
 ```rust
@@ -64,8 +64,9 @@ Env overrides:
 
 - `STACKQL_MCP_BIN`: path to a stackql binary to run directly (skips acquisition)
 - `STACKQL_MCP_BUNDLE`: path to a local `.mcpb` to extract instead of downloading
+- `STACKQL_MCP_VERSION`: `latest` (default), `pinned`, or a release version such as `0.10.601`
 
-Builder equivalents: `.binary(path)`, `.bundle_path(path)`, plus `.approot(path)` to relocate StackQL's application root (default `~/.stackql`).
+Builder equivalents: `.binary(path)`, `.bundle_path(path)`, `.version(BundleVersion)`, plus `.approot(path)` to relocate StackQL's application root (default `~/.stackql`).
 
 If you bring your own MCP stack, `Builder::command()` returns a `std::process::Command` preloaded with the canonical launch arguments instead of starting anything.
 
@@ -90,6 +91,18 @@ STACKQL_MCP_BUNDLE_FILE=$BUNDLE cargo build -p auditron --features vendored --re
 ```
 
 The resulting binary (~80 MB) carries the StackQL server inside and runs on a clean machine with no downloads.
+
+## Demo app: stackql-agent
+
+[stackql-agent](stackql-agent) is the agentic companion: it embeds this crate and wires the StackQL MCP tools into a [rig](https://docs.rig.rs) agent. One binary becomes a platform-engineering, SRE, or audit agent by swapping a system prompt - the backend and the read-only contract are identical across all three.
+
+```sh
+export ANTHROPIC_API_KEY=sk-ant-...
+cargo run -p stackql-agent -- --persona platform   # also: sre, audit
+cargo run -p stackql-agent -- --check              # pre-flight, no model calls
+```
+
+It runs against public GitHub data with zero cloud credentials; point `--auth` at a credentialed provider for IGA, CSPM, FinOps, and AWS/Google/Azure. The integration is about ten lines: `server.list_all_tools()` plus `server.peer()` feed straight into rig's `rmcp_tools()`.
 
 ## Development
 
