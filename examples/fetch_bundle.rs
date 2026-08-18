@@ -1,4 +1,4 @@
-//! Fetch the pinned platform .mcpb into the shared cache and print its path.
+//! Fetch the platform .mcpb (latest release by default) into the shared cache and print its path.
 //! The producer step for vendored builds:
 //!
 //! ```text

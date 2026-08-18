@@ -7,10 +7,14 @@
 //!
 //! Two acquisition modes behind one API:
 //!
-//! - sidecar (default feature): download the platform's .mcpb bundle at first
-//!   run, verify its sha256 against pins baked into the crate, and cache it
-//!   under `~/.stackql/mcp-server-bin/` (shared with the npm and PyPI
-//!   wrappers)
+//! - sidecar (default feature): resolve the latest stackql release at
+//!   start-up, download the platform's .mcpb bundle on first use of that
+//!   release, verify its sha256 against the release's published `.sha256`
+//!   asset, and cache it under `~/.stackql/mcp-server-bin/` (shared with the
+//!   npm and PyPI wrappers). [`Builder::version`] / `STACKQL_MCP_VERSION`
+//!   select a pinned or exact release instead; when the latest release cannot
+//!   be resolved (offline) a cached release, then the crate's pinned release,
+//!   is used
 //! - vendored (`vendored` feature): embed the .mcpb with `include_bytes!` and
 //!   extract on first run - no network at runtime, single shippable binary
 //!
@@ -38,6 +42,7 @@ mod error;
 mod launch;
 mod pins;
 mod platform;
+mod release;
 
 use std::ops::Deref;
 use std::path::PathBuf;
@@ -50,6 +55,7 @@ pub use cache::{ENV_BIN, ENV_BUNDLE};
 pub use error::{Error, Result};
 pub use pins::{Pin, PINS, STACKQL_VERSION};
 pub use platform::Platform;
+pub use release::{BundleVersion, ENV_VERSION};
 
 /// Safety contract for query / mutation / lifecycle tools, enforced
 /// server-side. Maps to `server.mode` in the server's `--mcp.config`.
@@ -79,23 +85,32 @@ impl Mode {
     }
 }
 
-/// Download the pinned .mcpb bundle for the host platform into the shared
-/// cache (verified against the baked sha256 pin) and return its path. Skips
-/// the download when a verified copy is already present.
+/// Download the .mcpb bundle for the host platform into the shared cache
+/// and return its path. Uses the default release selection (latest, or
+/// `STACKQL_MCP_VERSION`); see [`fetch_bundle_with`] to choose explicitly.
+/// Skips the download when a verified copy is already present.
 ///
 /// This is the producer side of vendored builds: fetch the bundle once on the
 /// build machine, then embed it with [`include_bundle!`].
 #[cfg(feature = "sidecar")]
 pub fn fetch_bundle() -> Result<PathBuf> {
+    fetch_bundle_with(&BundleVersion::default().resolved_from_env())
+}
+
+/// [`fetch_bundle`] for a specific release selection. `Latest` and `Exact`
+/// verify against the release's published `.sha256` asset; `Pinned` against
+/// the pins baked into this crate.
+#[cfg(feature = "sidecar")]
+pub fn fetch_bundle_with(version: &BundleVersion) -> Result<PathBuf> {
     let platform = Platform::detect()?;
-    let pin = pins::pin_for(platform)?;
+    let bundle = release::resolve(version, platform)?;
     let dest = cache::bin_cache_root()?
-        .join(pins::STACKQL_VERSION)
-        .join(pin.bundle_name);
-    if dest.is_file() && download::sha256_file(&dest)? == pin.sha256 {
+        .join(&bundle.version)
+        .join(bundle.bundle_name);
+    if dest.is_file() && download::sha256_file(&dest)? == bundle.sha256 {
         return Ok(dest);
     }
-    download::download_verified(&pins::bundle_url(pin), pin.sha256, &dest)?;
+    download::download_verified(&bundle.url(), &bundle.sha256, &dest)?;
     Ok(dest)
 }
 
@@ -172,6 +187,15 @@ impl Builder {
     /// `STACKQL_MCP_BUNDLE` env var takes precedence over this.
     pub fn bundle_path(mut self, path: impl Into<PathBuf>) -> Self {
         self.acquisition.bundle_path = Some(path.into());
+        self
+    }
+
+    /// Which stackql release the sidecar runs. Defaults to
+    /// [`BundleVersion::Latest`]. The `STACKQL_MCP_VERSION` env var
+    /// (`latest`, `pinned`, or a version) takes precedence over this. Ignored
+    /// when a binary or bundle override is in effect.
+    pub fn version(mut self, version: BundleVersion) -> Self {
+        self.acquisition.version = version;
         self
     }
 

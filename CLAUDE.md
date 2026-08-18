@@ -11,8 +11,10 @@ stance.
 
 Two acquisition modes, both behind one API:
 
-1. Sidecar (default feature): download the platform's .mcpb at first run,
-   verify sha256 against pins baked into the crate, cache, spawn over stdio
+1. Sidecar (default feature): resolve the latest stackql release, download
+   the platform's .mcpb at first run, verify sha256 against the release's
+   .sha256 asset (or the pins baked into the crate for
+   BundleVersion::Pinned), cache, spawn over stdio
 2. Vendored (`vendored` feature): caller embeds the binary with
    `include_bytes!` (we provide the macro/helper + extract-on-first-run) -
    the single-shippable-binary story for compiled agent apps
@@ -27,9 +29,12 @@ justify anything beyond that.
 
 Source of truth: stackql/stackql-mcpb-packaging (the packaging repo).
 
-- Per-version sha256 pins from the release .sha256 assets (a consolidated
-  platforms.json release asset is planned - prefer it once present); pins
-  are baked at crate build/render time like npm's platforms.json
+- Default release is latest: resolved at start-up from
+  github.com/stackql/stackql/releases/latest and verified against that
+  release's .sha256 asset (a consolidated platforms.json release asset is
+  planned - prefer it once present). Per-version sha256 pins are still
+  baked into the crate for BundleVersion::Pinned and as the offline
+  fallback; STACKQL_MCP_VERSION=latest|pinned|<version> overrides
 - Canonical launch args (cwd-independence mandatory):
   `mcp --mcp.server.type=stdio --approot <home>/.stackql
    --mcp.config {"server": {"mode": "<mode>", "audit": {"disabled": true}}}`
@@ -37,7 +42,7 @@ Source of truth: stackql/stackql-mcpb-packaging (the packaging repo).
 - Shared binary cache: `~/.stackql/mcp-server-bin/<version>/<platform-key>/`
   (same as npm/pypi wrappers - check before downloading)
 - Platform keys: linux-x64, linux-arm64, windows-x64, darwin-universal
-- Env overrides honored: STACKQL_MCP_BIN, STACKQL_MCP_BUNDLE
+- Env overrides honored: STACKQL_MCP_BIN, STACKQL_MCP_BUNDLE, STACKQL_MCP_VERSION
 - Conformance: packaging repo's scripts/smoke-test.py --cmd must pass
   against the crate's example launcher; port the same checks to Rust tests
 

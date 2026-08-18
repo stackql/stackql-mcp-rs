@@ -31,7 +31,7 @@ Run it: `cargo run --example minimal`. The github provider in `null_auth` mode n
 
 Two ways to get the server binary, both behind the same API:
 
-- sidecar (default feature): downloads the platform's `.mcpb` bundle at first run, verifies its sha256 against pins baked into the crate, and caches it. Subsequent starts are offline.
+- sidecar (default feature): resolves the latest stackql release at start-up, downloads the platform's `.mcpb` bundle on first use of that release, verifies its sha256 against the release's published `.sha256` asset, and caches it. Pin a release with `.version(BundleVersion::Pinned)` (the release whose pins are baked into the crate, verified offline) or `.version(BundleVersion::Exact("0.10.601".into()))`; `STACKQL_MCP_VERSION=latest|pinned|<version>` overrides. If the latest release cannot be resolved (offline), the newest cached release is used, then the pinned one.
 - vendored (`vendored` feature): embed the bundle in your binary and extract it on first run - no network at runtime, a single shippable binary:
 
 ```rust
@@ -64,8 +64,9 @@ Env overrides:
 
 - `STACKQL_MCP_BIN`: path to a stackql binary to run directly (skips acquisition)
 - `STACKQL_MCP_BUNDLE`: path to a local `.mcpb` to extract instead of downloading
+- `STACKQL_MCP_VERSION`: `latest` (default), `pinned`, or a release version such as `0.10.601`
 
-Builder equivalents: `.binary(path)`, `.bundle_path(path)`, plus `.approot(path)` to relocate StackQL's application root (default `~/.stackql`).
+Builder equivalents: `.binary(path)`, `.bundle_path(path)`, `.version(BundleVersion)`, plus `.approot(path)` to relocate StackQL's application root (default `~/.stackql`).
 
 If you bring your own MCP stack, `Builder::command()` returns a `std::process::Command` preloaded with the canonical launch arguments instead of starting anything.
 

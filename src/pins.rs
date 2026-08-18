@@ -4,6 +4,10 @@
 //! packaging repo (stackql/stackql-mcpb-packaging) targets. Update this table
 //! when bumping STACKQL_VERSION. Once the packaging repo publishes a
 //! consolidated platforms.json release asset, prefer rendering from that.
+//!
+//! These pins back `BundleVersion::Pinned` and the offline fallback; the
+//! default (`BundleVersion::Latest`) verifies against the release's own
+//! .sha256 asset instead - see `release.rs`.
 
 use crate::error::{Error, Result};
 use crate::platform::Platform;
@@ -45,6 +49,7 @@ pub const PINS: &[Pin] = &[
 
 /// Look up the pin for a platform. Every `Platform` variant has a pin; a miss
 /// here is a crate bug, so it surfaces as `UnsupportedPlatform`.
+#[cfg_attr(not(feature = "sidecar"), allow(dead_code))]
 pub fn pin_for(platform: Platform) -> Result<&'static Pin> {
     PINS.iter()
         .find(|p| p.platform_key == platform.key())
@@ -52,15 +57,6 @@ pub fn pin_for(platform: Platform) -> Result<&'static Pin> {
             os: std::env::consts::OS,
             arch: std::env::consts::ARCH,
         })
-}
-
-/// Download URL for a pinned bundle. Bundles are attached to the matching
-/// stackql/stackql release.
-pub fn bundle_url(pin: &Pin) -> String {
-    format!(
-        "https://github.com/stackql/stackql/releases/download/v{STACKQL_VERSION}/{}",
-        pin.bundle_name
-    )
 }
 
 #[cfg(test)]
@@ -95,14 +91,5 @@ mod tests {
             );
             assert_eq!(pin.sha256, pin.sha256.to_lowercase());
         }
-    }
-
-    #[test]
-    fn bundle_url_points_at_the_pinned_release() {
-        let pin = pin_for(Platform::LinuxX64).unwrap();
-        assert_eq!(
-            bundle_url(pin),
-            "https://github.com/stackql/stackql/releases/download/v0.10.601/stackql-mcp-linux-x64.mcpb"
-        );
     }
 }
