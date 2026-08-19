@@ -2,7 +2,9 @@
 
 ## What this repo is
 
-Demo code and runbook for the talk "Rust-native agentic platform engineering with embedded MCP", delivered by Jeff Aven at the Rust User Group Melbourne (late August 2026). Everything in here exists to support that talk. It is not a library and not a product; it is a working, repeatable demonstration that marries up with the slide deck.
+The long-lived Rust demo repo for embedded StackQL MCP: working, repeatable demonstrations of building agentic applications in Rust on the published `stackql-mcp` crate. It began as (and still contains) the demo code and runbook for the talk "Rust-native agentic platform engineering with embedded MCP" (Jeff Aven, Rust User Group Melbourne, August 2026), and additionally hosts the reference apps that shipped alongside the crate before the crate moved into stackql/stackql `packaging/mcpb/cargo`. It is not a library and not a product.
+
+History note: this repository was previously `stackql/stackql-mcp-rs` (the crate's original home; renamed, stars and history preserved). The pre-repurpose crate tree is in git history before commit 464fab9.
 
 The deck is mastered in Google Slides:
 https://docs.google.com/presentation/d/15FpxQqUQ6WQdQYkHIL_CgVkKo3DgzZa_75VQYyzbEgo/edit
@@ -11,7 +13,7 @@ A PDF export of the deck lives in `ref/` (gitignored) and is the reference for w
 
 ## The talk in one paragraph
 
-StackQL treats cloud and SaaS providers as data sources accessed via SQL. Agents in the platform engineering / SRE / observability space need to query, reason about, and act on actual running state, not on state files. The StackQL MCP server is the agent interface to the StackQL engine, with a small fixed tool surface (16 tools in v0.10.601) and safety modes gating writes. The `stackql-mcp` crate embeds that MCP server in a Rust application, either as a sidecar (resolved from the latest release, downloaded and verified at first run) or vendored straight into the Rust application (single self-contained binary). The concrete example is `steward`, a platform-engineering agent that keeps repositories on a golden path and repairs drift with a human approving each write.
+StackQL treats cloud and SaaS providers as data sources accessed via SQL. Agents in the platform engineering / SRE / observability space need to query, reason about, and act on actual running state, not on state files. The StackQL MCP server is the agent interface to the StackQL engine, with a small fixed tool surface (16 tools) and safety modes gating writes. The `stackql-mcp` crate embeds that MCP server in a Rust application, either as a sidecar (the release pinned in the crate, downloaded and sha256-verified at first run) or vendored straight into the Rust application (single self-contained binary). The concrete example is `steward`, a platform-engineering agent that keeps repositories on a golden path and repairs drift with a human approving each write.
 
 ## Demo flow
 
@@ -52,11 +54,17 @@ rust-embedded-mcp-with-stackql/
   primer/                    act 1: queries/*.iql, 01-shell.sh, 02-exec-formats.sh, 03-srv-psql.sh, _lib.sh
   stacks/                    act 2: golden-path/ (stackql_manifest.yml, resources/*.iql), README.md
   embedded/                  act 3
-    Cargo.toml               workspace; [patch.crates-io] to the crate repo until 0.2 is published
+    Cargo.toml               workspace; stackql-mcp = "0.10" from crates.io (version-locked
+                             to the stackql release it embeds; a server bump is a normal
+                             dependency bump - never reintroduce a git pin)
     minimal/                 sidecar example
     minimal-vendored/        vendored feature, build.rs fetches the bundle
     steward/                 the agent (clap + rig + rmcp ClientHandler with elicitation)
+    auditron/                reference app: terminal compliance copilot over controls/ packs
+    stackql-agent/           reference app: rig agent over Claude; --check, -p one-shot, REPL
     README.md                sidecar vs vendored, safety modes, steward usage
+  controls/                  YAML control packs for auditron (github-core runs with zero creds)
+  .github/workflows/ci.yml   fmt, clippy -D warnings, build, zero-credential smokes, agent-live
   scripts/
     check-env.sh             tools on PATH, creds present, rust version
     prewarm.sh               providers, bundle cache, all builds, one run of everything
@@ -96,9 +104,15 @@ Shell scripts:
 - Terminal font size and colour scheme are set for a projector. Output in act 1 fits an 80x24 terminal without wrapping; pick queries and `SELECT` columns accordingly.
 - Provider quirks that bite on stage: `ORDER BY` + `LIMIT` in one SELECT applies the limit first (wrap in a subquery); `IN (...)` on a key column fans out to one API call per value; booleans compare as `0`/`1`; a JOIN pushes key params from the other table but filter the fan-out explicitly.
 
+## CI
+
+`.github/workflows/ci.yml`, on every push to main and PR. `build-test`: fmt, clippy `-D warnings`, workspace build (the vendored build.rs downloads and pin-verifies the bundle - network needed), then zero-credential smokes: `minimal`, `auditron scan --no-tui`, `stackql-agent --check`. Convention that matters: auditron is a compliance gate whose exit 2 means "controls failed" - CI treats that as a successful run (`|| [ $? -eq 2 ]`); only a crash fails the job. `agent-live` runs one real one-shot `stackql-agent` prompt; the `ANTHROPIC_API_KEY` org secret is already configured, so pushes make one real (small) Claude call.
+
 ## Working in this repo with Claude
 
 - Before writing anything for act 3, read the crate docs at docs.rs/stackql-mcp (source: stackql/stackql `packaging/mcpb/cargo`); the published crate API is the source of truth, not memory. The crate version equals the stackql release it embeds; the workspace pins the minor (`stackql-mcp = "0.10"`).
+- The models default to Claude (`claude-opus-5` for steward via `STEWARD_MODEL`, `claude-sonnet-5` for stackql-agent). anthropic-sdk / rig read `ANTHROPIC_API_KEY` from the environment.
+- auditron embeds `controls/github-core.yaml` via `include_str!("../../../controls/...")` - the path is relative to `embedded/auditron/src/`, and the cwd-based pack listing expects to run from the repo root.
 - Before writing stack files for act 2, check `stackql-deploy --help` for the current argument order and flags in the Rust build. Env vars are referenced in manifests as `{{ GITHUB_ORG }}` (no `vars.` prefix). One statement per anchor.
 - When asked for slide content, produce paste-ready text and mermaid source in `slides/notes.md`, not slide files. The deck lives in Google Slides.
 - When asked for runbook changes, keep RUNBOOK.md strictly in demo order and copy/paste-able. No prose between commands beyond one line of intent.
