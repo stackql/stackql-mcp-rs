@@ -1,0 +1,7 @@
+-- Act 1, optional flourish (needs AWS credentials in .env).
+-- Same engine, second provider, no glue code. Skip if creds are not set.
+
+SELECT instance_type, JSON_EXTRACT(state, '$.name') AS state, COUNT(*) AS n
+FROM aws.ec2.instances
+WHERE region = 'ap-southeast-2'
+GROUP BY instance_type, state;

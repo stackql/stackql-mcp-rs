@@ -1,0 +1,68 @@
+# Act 2, slide "How to use StackQL" (Platform Automation row).
+# The golden path for a repository, declared as data: topics, a standard
+# label set, and a ruleset protecting the default branch. stackql-deploy
+# converges the live repo onto this; steward (act 3) watches for drift.
+version: 1
+name: golden-path
+description: golden-path conformance for a GitHub repository (topics, labels, default-branch ruleset)
+providers:
+  - github
+globals:
+  - name: org
+    description: GitHub org that owns the repo
+    value: "{{ GITHUB_ORG }}"
+  - name: repo
+    description: repository to converge
+    value: "{{ GITHUB_REPO }}"
+resources:
+  - name: repo_topics
+    description: topics every repo on the golden path carries
+    props:
+      - name: topics
+        value: ["stackql", "rust", "mcp", "golden-path"]
+  - name: label_needs_triage
+    description: standard label 'needs-triage'
+    file: label.iql
+    props:
+      - name: label_name
+        value: needs-triage
+      - name: label_color
+        value: "d93f0b"
+      - name: label_description
+        value: "New issue awaiting triage by the platform team"
+  - name: label_security
+    description: standard label 'security'
+    file: label.iql
+    props:
+      - name: label_name
+        value: security
+      - name: label_color
+        value: "b60205"
+      - name: label_description
+        value: "Security posture or vulnerability"
+  - name: label_agent_fixed
+    description: standard label 'agent-fixed'
+    file: label.iql
+    props:
+      - name: label_name
+        value: agent-fixed
+      - name: label_color
+        value: "0e8a16"
+      - name: label_description
+        value: "Drift remediated by steward"
+  - name: default_branch_ruleset
+    description: no deletions or force pushes on the default branch
+    props:
+      - name: ruleset_name
+        value: "golden-path-default-branch"
+      - name: rules
+        value:
+          - { type: deletion }
+          - { type: non_fast_forward }
+    exports:
+      - ruleset_id
+  - name: conformance
+    description: one row per check, for the log and for stackql-deploy test
+    type: query
+    exports:
+      - golden_path_ok

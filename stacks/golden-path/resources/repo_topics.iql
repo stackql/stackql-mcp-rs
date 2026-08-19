@@ -1,0 +1,26 @@
+/*+ exists */
+SELECT CASE WHEN json_array_length(coalesce(topics, '[]')) > 0 THEN 1 ELSE 0 END AS count
+FROM github.repos.repos
+WHERE org = '{{ org }}' AND name = '{{ repo }}'
+
+/*+ create */
+REPLACE github.repos.topics
+SET names = '{{ topics }}'
+WHERE owner = '{{ org }}' AND repo = '{{ repo }}'
+
+/*+ statecheck, retries=3, retry_delay=3 */
+SELECT
+CASE WHEN (SELECT COUNT(*) FROM json_each(topics) WHERE value IN {{ topics | sql_list }}) = {{ topics | from_json | length }}
+     THEN 1 ELSE 0 END AS count
+FROM github.repos.repos
+WHERE org = '{{ org }}' AND name = '{{ repo }}'
+
+/*+ update */
+REPLACE github.repos.topics
+SET names = '{{ topics }}'
+WHERE owner = '{{ org }}' AND repo = '{{ repo }}'
+
+/*+ delete */
+REPLACE github.repos.topics
+SET names = '[]'
+WHERE owner = '{{ org }}' AND repo = '{{ repo }}'

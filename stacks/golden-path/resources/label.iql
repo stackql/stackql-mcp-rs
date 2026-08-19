@@ -1,0 +1,23 @@
+/*+ exists */
+SELECT COUNT(*) as count
+FROM github.issues.labels
+WHERE owner = '{{ org }}' AND repo = '{{ repo }}' AND name = '{{ label_name }}'
+
+/*+ create */
+INSERT INTO github.issues.labels (owner, repo, name, color, description)
+SELECT '{{ org }}', '{{ repo }}', '{{ label_name }}', '{{ label_color }}', '{{ label_description }}'
+
+/*+ statecheck, retries=3, retry_delay=3 */
+SELECT COUNT(*) as count
+FROM github.issues.labels
+WHERE owner = '{{ org }}' AND repo = '{{ repo }}' AND name = '{{ label_name }}'
+AND color = '{{ label_color }}'
+
+/*+ update */
+UPDATE github.issues.labels
+SET color = '{{ label_color }}', description = '{{ label_description }}'
+WHERE owner = '{{ org }}' AND repo = '{{ repo }}' AND name = '{{ label_name }}'
+
+/*+ delete */
+DELETE FROM github.issues.labels
+WHERE owner = '{{ org }}' AND repo = '{{ repo }}' AND name = '{{ label_name }}'

@@ -1,0 +1,10 @@
+-- Act 1: ordering and limiting. The subquery keeps ORDER BY ahead of LIMIT.
+
+SELECT name, stars, forks
+FROM (
+  SELECT name, stargazers_count AS stars, forks_count AS forks
+  FROM github.repos.repos
+  WHERE org = 'stackql' AND archived = 0
+  ORDER BY stargazers_count DESC
+) t
+LIMIT 5;

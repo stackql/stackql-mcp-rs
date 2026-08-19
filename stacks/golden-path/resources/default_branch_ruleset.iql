@@ -1,0 +1,35 @@
+/*+ exists */
+SELECT id AS ruleset_id
+FROM github.repos.rules
+WHERE owner = '{{ org }}' AND repo = '{{ repo }}'
+AND name = '{{ ruleset_name }}'
+
+/*+ create */
+INSERT INTO github.repos.rules (owner, repo, name, target, enforcement, conditions, rules)
+SELECT
+'{{ org }}',
+'{{ repo }}',
+'{{ ruleset_name }}',
+'branch',
+'active',
+'{"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}}',
+'{{ rules }}'
+
+/*+ statecheck, retries=3, retry_delay=3 */
+SELECT COUNT(*) as count
+FROM github.repos.rules
+WHERE owner = '{{ org }}' AND repo = '{{ repo }}'
+AND name = '{{ ruleset_name }}'
+AND enforcement = 'active'
+AND target = 'branch'
+
+/*+ exports */
+SELECT id AS ruleset_id
+FROM github.repos.rules
+WHERE owner = '{{ org }}' AND repo = '{{ repo }}'
+AND name = '{{ ruleset_name }}'
+
+/*+ delete */
+DELETE FROM github.repos.rules
+WHERE owner = '{{ org }}' AND repo = '{{ repo }}'
+AND ruleset_id = '{{ this.ruleset_id }}'

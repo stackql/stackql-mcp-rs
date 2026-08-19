@@ -1,0 +1,18 @@
+/*+ exports */
+SELECT SUM(ok) AS passed, COUNT(*) AS checks,
+       CASE WHEN SUM(ok) = COUNT(*) THEN 'true' ELSE 'false' END AS golden_path_ok
+FROM (
+  SELECT CASE WHEN json_array_length(topics) >= 4 THEN 1 ELSE 0 END AS ok
+  FROM github.repos.repos
+  WHERE org = '{{ org }}' AND name = '{{ repo }}'
+  UNION ALL
+  SELECT CASE WHEN COUNT(*) = 3 THEN 1 ELSE 0 END
+  FROM github.issues.labels
+  WHERE owner = '{{ org }}' AND repo = '{{ repo }}'
+  AND name IN ('needs-triage', 'security', 'agent-fixed')
+  UNION ALL
+  SELECT CASE WHEN COUNT(*) = 1 THEN 1 ELSE 0 END
+  FROM github.repos.rules
+  WHERE owner = '{{ org }}' AND repo = '{{ repo }}'
+  AND name = 'golden-path-default-branch' AND enforcement = 'active'
+) checks
