@@ -1,0 +1,55 @@
+/*+ exists */
+WITH tagged AS (
+  SELECT split_part(ResourceARN, '/', 2) AS instance_id
+  FROM awscc.tagging.tagged_resources
+  WHERE region = '{{ region }}'
+  AND TagFilters = '{{ identity_tags | to_aws_tag_filters }}'
+  AND ResourceTypeFilters = '["ec2:instance"]'
+),
+instances AS (
+  SELECT instance_id
+  FROM awscc.ec2.instances_list_only
+  WHERE region = '{{ region }}'
+)
+SELECT i.instance_id
+FROM instances i INNER JOIN tagged t ON i.instance_id = t.instance_id
+
+/*+ create */
+INSERT INTO awscc.ec2.instances (
+  ImageId, InstanceType, SubnetId, SecurityGroupIds, UserData, Tags, region
+)
+SELECT
+  '{{ ami_id }}',
+  '{{ instance_type }}',
+  '{{ subnet_id }}',
+  '{{ sg_ids }}',
+  '{{ user_data | base64_encode }}',
+  '{{ instance_tags }}',
+  '{{ region }}'
+RETURNING *
+
+/*+ statecheck, retries=6, retry_delay=5 */
+SELECT COUNT(*) AS count FROM (
+  SELECT
+    AWS_POLICY_EQUAL(security_group_ids, '{{ sg_ids }}') AS test_sgs,
+    AWS_POLICY_EQUAL(tags, '{{ instance_tags }}') AS test_tags
+  FROM awscc.ec2.instances
+  WHERE Identifier = '{{ this.instance_id }}'
+  AND region = '{{ region }}'
+  AND instance_type = '{{ instance_type }}'
+) t
+WHERE test_sgs = 1 AND test_tags = 1
+
+/*+ update */
+UPDATE awscc.ec2.instances
+SET PatchDocument = string('{{ { "Tags": instance_tags } | generate_patch_document }}')
+WHERE Identifier = '{{ this.instance_id }}'
+AND region = '{{ region }}'
+
+/*+ exports */
+SELECT '{{ this.instance_id }}' AS instance_id
+
+/*+ delete, retries=12, retry_delay=10 */
+DELETE FROM awscc.ec2.instances
+WHERE Identifier = '{{ this.instance_id }}'
+AND region = '{{ region }}'

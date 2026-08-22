@@ -31,10 +31,13 @@ want jq     "act 1 pipes"
 want column "act 1 pipes (util-linux / bsdmainutils)"
 
 echo "credentials (.env):"
-for v in STACKQL_GITHUB_USERNAME STACKQL_GITHUB_PASSWORD ANTHROPIC_API_KEY; do
+for v in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_REGION AWS_VPC_ID AWS_SUBNET_ID AWS_AMI_ID \
+         CLOUDFLARE_API_TOKEN CLOUDFLARE_ZONE_ID ANTHROPIC_API_KEY \
+         STACKQL_GITHUB_USERNAME STACKQL_GITHUB_PASSWORD; do
   if [ -n "${!v:-}" ]; then printf '  set     %s\n' "$v"; else printf '  unset   %s\n' "$v"; fi
 done
-printf '  target  %s/%s\n' "$GITHUB_ORG" "$GITHUB_REPO"
+printf '  service %s.%s in %s\n' "${DEMO_HOST:-rust-demo}" "${DEMO_DOMAIN:-stackql.xyz}" "${AWS_REGION:-?}"
+printf '  github  %s/%s (zero-credential variant)\n' "$GITHUB_ORG" "$GITHUB_REPO"
 
 echo "rust toolchain:"
 rv="$(rustc --version 2>/dev/null | awk '{print $2}')"

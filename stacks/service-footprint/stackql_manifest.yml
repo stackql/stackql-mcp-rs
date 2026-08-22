@@ -1,0 +1,137 @@
+# Act 2 (credentialed variant), slide "How to use StackQL" (Platform Automation row).
+# One service's footprint across two planes: compute in AWS (security group +
+# instance, tagged) and its edge in Cloudflare (an A record on the demo zone
+# pointing at the instance). stackql-deploy converges it; steward (act 3)
+# watches it for drift across both providers.
+#
+# Needs in .env: AWS_REGION, AWS_VPC_ID, AWS_SUBNET_ID (auto-assign public IP),
+# AWS_AMI_ID, CLOUDFLARE_API_TOKEN, CLOUDFLARE_ZONE_ID, DEMO_HOST, DEMO_DOMAIN.
+version: 1
+name: service-footprint
+description: a service's footprint across AWS (compute) and Cloudflare (edge), as data
+providers:
+  - awscc
+  - aws
+  - cloudflare
+globals:
+  - name: region
+    value: "{{ AWS_REGION }}"
+  - name: vpc_id
+    value: "{{ AWS_VPC_ID }}"
+  - name: subnet_id
+    value: "{{ AWS_SUBNET_ID }}"
+  - name: ami_id
+    value: "{{ AWS_AMI_ID }}"
+  - name: zone_id
+    value: "{{ CLOUDFLARE_ZONE_ID }}"
+  - name: host
+    value: "{{ DEMO_HOST }}"
+  - name: domain
+    value: "{{ DEMO_DOMAIN }}"
+  - name: service
+    value: "{{ DEMO_HOST }}"
+  # identity_tags find the resources (exists queries); they never drift.
+  - name: identity_tags
+    value:
+      - Key: service
+        Value: "{{ DEMO_HOST }}"
+      - Key: 'stackql:stack-name'
+        Value: "{{ stack_name }}"
+      - Key: 'stackql:stack-env'
+        Value: "{{ stack_env }}"
+  # global_tags are the desired state: identity plus the governance tags
+  # steward checks (owner, cost-centre). Removing one is drift, not a new
+  # resource.
+  - name: global_tags
+    value:
+      - Key: service
+        Value: "{{ DEMO_HOST }}"
+      - Key: 'stackql:stack-name'
+        Value: "{{ stack_name }}"
+      - Key: 'stackql:stack-env'
+        Value: "{{ stack_env }}"
+      - Key: owner
+        Value: platform-team
+      - Key: cost-centre
+        Value: demo
+resources:
+  - name: web_sg
+    description: 443 and 80 from anywhere, nothing else inbound
+    props:
+      - name: group_name
+        value: "{{ service }}-{{ stack_env }}-sg"
+      - name: group_description
+        value: "{{ service }} web security group ({{ stack_env }})"
+      - name: sg_tags
+        value:
+          - Key: Name
+            Value: "{{ service }}-{{ stack_env }}-sg"
+        merge: ['global_tags']
+      - name: ingress
+        value:
+          - IpProtocol: tcp
+            FromPort: 443
+            ToPort: 443
+            CidrIp: 0.0.0.0/0
+            Description: https
+          - IpProtocol: tcp
+            FromPort: 80
+            ToPort: 80
+            CidrIp: 0.0.0.0/0
+            Description: http
+      - name: egress
+        value:
+          - IpProtocol: "-1"
+            FromPort: -1
+            ToPort: -1
+            CidrIp: 0.0.0.0/0
+            Description: all outbound
+    exports:
+      - security_group_id
+
+  - name: web_server
+    description: the service's one instance, tagged
+    props:
+      - name: instance_type
+        value: t3.micro
+      - name: sg_ids
+        value:
+          - "{{ security_group_id }}"
+      - name: user_data
+        value: |
+          #!/bin/bash
+          dnf install -y httpd
+          systemctl enable --now httpd
+          echo "<h1>{{ host }}.{{ domain }}</h1><p>stackql-deploy on AWS, watched by steward</p>" > /var/www/html/index.html
+      - name: instance_tags
+        value:
+          - Key: Name
+            Value: "{{ service }}-{{ stack_env }}"
+        merge: ['global_tags']
+    return_vals:
+      create:
+        - Identifier: instance_id
+    exports:
+      - instance_id
+
+  - name: web_server_ip
+    description: the public IP the edge must point at
+    type: query
+    exports:
+      - public_ip
+
+  - name: dns_record
+    description: the edge, an A record on the demo zone pointing at the instance
+    props:
+      - name: record_name
+        value: "{{ host }}.{{ domain }}"
+      - name: record_ttl
+        value: 300
+    exports:
+      - dns_record_id
+
+  - name: conformance
+    description: one row summarising the footprint, exported as footprint_ok
+    type: query
+    exports:
+      - footprint_ok

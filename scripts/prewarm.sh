@@ -7,18 +7,18 @@ set -euo pipefail
 . "$(dirname "$0")/_env.sh"
 cd "$_ROOT"
 
-echo "== 1. providers (act 1, act 2, act 3 all use github; aws is the optional flourish)"
-run stackql exec "${STACKQL_ARGS[@]}" "REGISTRY PULL github" >/dev/null
-if [ -n "${AWS_ACCESS_KEY_ID:-}" ]; then
-  run stackql exec "${STACKQL_ARGS[@]}" "REGISTRY PULL aws" >/dev/null
-fi
+echo "== 1. providers (act 1 github; acts 2 and 3 aws + awscc + cloudflare)"
+for p in github aws awscc cloudflare; do
+  run stackql exec "${STACKQL_ARGS[@]}" "REGISTRY PULL $p" >/dev/null
+done
 
 echo "== 2. act 1: answer each primer query once (warms nothing on the server, but proves the path)"
 for f in 02-inventory 03-top-repos 04-join 05-workflow-runs; do
   run stackql exec "${STACKQL_ARGS[@]}" -o csv "$(grep -v '^--' primer/queries/$f.iql | sed '/^$/d' | tr '\n' ' ' | sed 's/[; ]*$//')" | head -3
 done
 
-echo "== 3. act 2: stackql-deploy dry-run (no credentials needed)"
+echo "== 3. act 2: stackql-deploy dry-runs (no credentials needed)"
+run stackql-deploy build stacks/service-footprint dev --env-file .env --dry-run >/dev/null
 run stackql-deploy build stacks/golden-path dev --env-file .env --dry-run >/dev/null
 
 echo "== 4. act 3: build everything, sidecar bundle cached on first run"
@@ -40,6 +40,6 @@ echo "== cache"
 ls -R "${STACKQL_APPROOT:-$HOME/.stackql}/mcp-server-bin" | head -20
 
 echo
-echo "prewarm complete. Optional: export ANTHROPIC_API_KEY and run"
+echo "prewarm complete. With .env exported, converge the estate and warm the model:"
+echo "  stackql-deploy build stacks/service-footprint dev --env-file .env"
 echo "  ./embedded/target/release/steward check"
-echo "once so the first model call of the day is not on stage."

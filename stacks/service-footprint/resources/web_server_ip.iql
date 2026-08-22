@@ -1,0 +1,6 @@
+/*+ exports, retries=10, retry_delay=10 */
+SELECT public_ip_address AS public_ip
+FROM aws.ec2.instances
+WHERE region = '{{ region }}'
+AND instance_id = '{{ instance_id }}'
+AND public_ip_address IS NOT NULL

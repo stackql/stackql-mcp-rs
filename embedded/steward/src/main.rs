@@ -1,5 +1,5 @@
-//! steward - a platform-engineering agent that keeps repositories on the
-//! golden path. Act 3, step 3 (slide "DEMO").
+//! steward - a platform-engineering agent that keeps a service's estate on
+//! its golden path, across providers. Act 3, step 3 (slide "DEMO").
 //!
 //! An embedded StackQL MCP server (sidecar by default, vendored straight into
 //! this binary with `--features vendored`) wired into a rig agent. The
@@ -9,7 +9,7 @@
 //!   (server in read_only mode: writes are refused whatever the model does)
 //! - `steward fix`    same, then remediates; the server runs in safe mode and
 //!   asks for approval before every write, which this binary puts to the
-//!   human at the terminal
+//!   human at the terminal (--mode delete_safe: only deletes ask)
 //! - `steward ask`    a free-form read-only question
 //! - `steward sql`    run one statement through the embedded server directly
 //!   (no model): the deterministic fallback, and the quickest way to watch
@@ -22,10 +22,10 @@
 mod embed;
 mod prompt;
 
+use std::collections::BTreeMap;
 use std::io::Write as _;
-use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use futures::StreamExt;
 use rig::agent::{Agent, MultiTurnStreamItem};
@@ -38,32 +38,66 @@ use stackql_mcp::{Mode, StackqlMcp};
 use tokio::io::AsyncBufReadExt as _;
 
 const DEFAULT_MODEL: &str = "claude-opus-5";
-/// The golden-path policy ships inside the binary, so the vendored build is
-/// self-contained; --policy points at your own.
-const DEFAULT_POLICY: &str = include_str!("../policies/golden-path.md");
+
+/// Policies compiled into the binary, so the vendored build is self-contained.
+/// `--policy <name>` picks one; `--policy <path>` loads your own.
+struct BuiltinPolicy {
+    name: &'static str,
+    text: &'static str,
+    /// Providers the policy reads and writes; pulled at start-up.
+    providers: &'static [&'static str],
+    /// Env vars the policy's placeholders need (for the error message).
+    needs: &'static [&'static str],
+}
+
+const POLICIES: &[BuiltinPolicy] = &[
+    BuiltinPolicy {
+        name: "service-footprint",
+        text: include_str!("../policies/service-footprint.md"),
+        providers: &["aws", "awscc", "cloudflare"],
+        needs: &[
+            "AWS_REGION",
+            "CLOUDFLARE_ZONE_ID",
+            "DEMO_HOST",
+            "DEMO_DOMAIN",
+        ],
+    },
+    BuiltinPolicy {
+        name: "golden-path",
+        text: include_str!("../policies/golden-path.md"),
+        providers: &["github"],
+        needs: &["GITHUB_ORG", "GITHUB_REPO"],
+    },
+];
 
 #[derive(Parser)]
 #[command(
     name = "steward",
     version,
-    about = "Keeps repositories on the golden path: an agent over actual state, on an embedded StackQL MCP server"
+    about = "Keeps a service's estate on its golden path: an agent over actual state, on an embedded StackQL MCP server"
 )]
 struct Cli {
-    /// Repository to steward, as owner/name. Defaults to $GITHUB_ORG/$GITHUB_REPO.
-    #[arg(long, global = true)]
-    repo: Option<String>,
-    /// Policy file (markdown) describing the golden path. Default: the
-    /// golden-path policy compiled into the binary (policies/golden-path.md).
-    #[arg(long, global = true)]
-    policy: Option<PathBuf>,
-    /// Provider to pull and query.
-    #[arg(long, global = true, default_value = "github")]
-    provider: String,
-    /// Provider auth document as JSON. Default: STACKQL_GITHUB_USERNAME /
-    /// STACKQL_GITHUB_PASSWORD if set (server-side default auth), else
-    /// null_auth (public data, no credentials).
+    /// Built-in policy name (service-footprint, golden-path) or a path to a
+    /// markdown policy of your own. Placeholders like {{ AWS_REGION }} are
+    /// filled from the environment and --set.
+    #[arg(long, global = true, default_value = "service-footprint")]
+    policy: String,
+    /// Policy placeholder override, NAME=value (repeatable).
+    #[arg(long = "set", global = true, value_name = "NAME=value")]
+    sets: Vec<String>,
+    /// Provider to pull and query (repeatable). Default: the policy's providers.
+    #[arg(long = "provider", global = true)]
+    providers: Vec<String>,
+    /// Provider auth document as JSON, merged over the defaults. Default:
+    /// each provider's own env-var auth (AWS_*, CLOUDFLARE_API_TOKEN,
+    /// STACKQL_GITHUB_*), and github null_auth when no github creds are set.
     #[arg(long, global = true)]
     auth: Option<String>,
+    /// Server mode for writes (fix, sql --write): safe asks approval for
+    /// every write; delete_safe lets creates and updates through and asks
+    /// only for deletes. Reads always run read_only.
+    #[arg(long, global = true, default_value = "safe", value_parser = ["safe", "delete_safe"])]
+    mode: String,
     /// Model id (or set STEWARD_MODEL).
     #[arg(long, global = true, env = "STEWARD_MODEL", default_value = DEFAULT_MODEL)]
     model: String,
@@ -103,41 +137,70 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let command = cli.command.unwrap_or(Command::Check);
     let can_write = matches!(command, Command::Fix | Command::Sql { write: true, .. });
-    let mode = if can_write {
-        Mode::Safe
+    let mode = match (can_write, cli.mode.as_str()) {
+        (false, _) => Mode::ReadOnly,
+        (true, "delete_safe") => Mode::DeleteSafe,
+        (true, _) => Mode::Safe,
+    };
+
+    // The policy: built-in by name or a file, placeholders from env + --set.
+    let builtin = POLICIES.iter().find(|p| p.name == cli.policy);
+    let (policy_name, policy_text) = match builtin {
+        Some(p) => (p.name.to_string(), p.text.to_string()),
+        None => (
+            cli.policy.clone(),
+            std::fs::read_to_string(&cli.policy)
+                .with_context(|| format!("reading policy {} (not a built-in name)", cli.policy))?,
+        ),
+    };
+    let mut vars: BTreeMap<String, String> = std::env::vars().collect();
+    for kv in &cli.sets {
+        let (k, v) = kv
+            .split_once('=')
+            .with_context(|| format!("--set expects NAME=value, got {kv:?}"))?;
+        vars.insert(k.trim().to_string(), v.to_string());
+    }
+    let policy = prompt::render_policy(&policy_text, &vars).with_context(|| match builtin {
+        Some(p) => format!("policy {} needs {}", p.name, p.needs.join(", ")),
+        None => format!("policy {}", cli.policy),
+    })?;
+
+    let providers: Vec<String> = if cli.providers.is_empty() {
+        match builtin {
+            Some(p) => p.providers.iter().map(|s| s.to_string()).collect(),
+            None => bail!("pass --provider at least once with a custom policy"),
+        }
     } else {
-        Mode::ReadOnly
+        cli.providers.clone()
     };
 
-    let repo = cli
-        .repo
-        .or_else(|| {
-            Some(format!(
-                "{}/{}",
-                std::env::var("GITHUB_ORG").ok()?,
-                std::env::var("GITHUB_REPO").ok()?
-            ))
+    // Auth: providers read their own env vars server-side; github falls back
+    // to null_auth (public data) when no credentials are set; --auth merges
+    // over the top.
+    let mut auth = serde_json::Map::new();
+    if providers.iter().any(|p| p == "github") && !github_creds_present() {
+        auth.insert("github".into(), serde_json::json!({ "type": "null_auth" }));
+    }
+    if let Some(raw) = &cli.auth {
+        let extra: serde_json::Value =
+            serde_json::from_str(raw).context("parsing --auth as JSON")?;
+        for (k, v) in extra.as_object().context("--auth must be a JSON object")? {
+            auth.insert(k.clone(), v.clone());
+        }
+    }
+    let auth_label: Vec<String> = providers
+        .iter()
+        .map(|p| match auth.get(p).and_then(|a| a["type"].as_str()) {
+            Some(t) => format!("{p}:{t}"),
+            None => format!("{p}:env"),
         })
-        .context("pass --repo owner/name or set GITHUB_ORG and GITHUB_REPO")?;
-
-    let auth: Option<serde_json::Value> = match &cli.auth {
-        Some(raw) => Some(serde_json::from_str(raw).context("parsing --auth as JSON")?),
-        None if cli.provider == "github" && github_creds_present() => None,
-        None => Some(serde_json::json!({ &cli.provider: { "type": "null_auth" } })),
-    };
-    let auth_label = match &auth {
-        None => "provider default (env)".to_string(),
-        Some(a) => a[&cli.provider]["type"]
-            .as_str()
-            .unwrap_or("custom")
-            .to_string(),
-    };
+        .collect();
 
     // 1. The embedded StackQL MCP server. Vendored when built with the
     //    feature, otherwise downloaded and sha256-verified on first run.
     let mut builder = StackqlMcp::builder().mode(mode);
-    if let Some(a) = auth {
-        builder = builder.auth(a);
+    if !auth.is_empty() {
+        builder = builder.auth(serde_json::Value::Object(auth));
     }
     #[cfg(feature = "vendored")]
     let builder = builder.bundle_bytes(stackql_mcp::include_bundle!());
@@ -147,18 +210,18 @@ async fn main() -> Result<()> {
     );
     let server = embed::start(builder, embed::ApprovingClient::new(cli.yes)).await?;
 
-    if let Err(e) = pull_provider(&server, &cli.provider).await {
-        eprintln!(
-            "steward: could not pull provider {} ({e:#}); continuing with whatever is cached",
-            cli.provider
-        );
+    for p in &providers {
+        if let Err(e) = pull_provider(&server, p).await {
+            eprintln!(
+                "steward: could not pull provider {p} ({e:#}); continuing with whatever is cached"
+            );
+        }
     }
     let tools = server.list_all_tools().await.context("listing MCP tools")?;
     eprintln!(
-        "steward: {} | provider {} ({}) | {} tools | mode {} | model {}",
-        repo,
-        cli.provider,
-        auth_label,
+        "steward: policy {} | providers {} | {} tools | mode {} | model {}",
+        policy_name,
+        auth_label.join(", "),
         tools.len(),
         mode.as_str(),
         cli.model
@@ -201,30 +264,31 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    // 2. The policy and the agent. list_all_tools() + peer() off the embedded
-    //    server go straight into rig's rmcp_tools(); that is the integration.
-    let policy = match &cli.policy {
-        Some(path) => std::fs::read_to_string(path)
-            .with_context(|| format!("reading policy {}", path.display()))?,
-        None => DEFAULT_POLICY.to_string(),
-    };
+    // 2. The agent. list_all_tools() + peer() off the embedded server go
+    //    straight into rig's rmcp_tools(); that is the integration.
     let agent = anthropic::Client::from_env()
         .context("ANTHROPIC_API_KEY not set")?
         .agent(&cli.model)
-        .preamble(&prompt::system_prompt(&policy, &repo, can_write))
+        .preamble(&prompt::system_prompt(&policy, &policy_name, mode))
         .rmcp_tools(tools, server.peer().clone())
+        .max_tokens(32_000) // rig requires it for Anthropic; streaming keeps it safe
         .default_max_turns(cli.max_turns)
         .build();
 
     // 3. Run the task.
     let result = match command {
         Command::Check => {
-            answer(&agent, &format!("Check {repo} against the policy and report drift."), cli.max_turns).await
+            answer(
+                &agent,
+                "Check the estate against the policy and report drift.",
+                cli.max_turns,
+            )
+            .await
         }
         Command::Fix => {
             answer(
                 &agent,
-                &format!("Check {repo} against the policy, then remediate every DRIFT finding the policy allows you to fix."),
+                "Check the estate against the policy, then remediate every DRIFT finding the policy and the session mode allow you to fix.",
                 cli.max_turns,
             )
             .await

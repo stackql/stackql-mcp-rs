@@ -1,21 +1,23 @@
 # Runbook
 
-Exact commands in demo order. Everything runs from the repo root in one shell. Lines starting with `#` are the one line of intent. Time budget: 45 minutes including slides; the timings below are the demo portions.
+Exact commands in demo order. Everything runs from the repo root in one shell with `.env` exported (`set -a; . ./.env; set +a`, which the scripts also do for themselves; `stackql-deploy` needs it exported because the stackql server it spawns reads provider credentials from the process environment). Lines starting with `#` are the one line of intent. Time budget: 45 minutes including slides; timings below are the demo portions.
+
+Providers on stage: `aws` + `awscc` (compute) and `cloudflare` (edge) for acts 2 and 3, `github` with `null_auth` for act 1. The GitHub golden-path variant (`stacks/golden-path`, `steward --policy golden-path`) is the zero-credential fallback and is not in the main flow.
 
 ## Before walking on stage
 
 ```sh
 cd rust-embedded-mcp-with-stackql
-set -a; . ./.env; set +a          # STACKQL_GITHUB_USERNAME/PASSWORD, ANTHROPIC_API_KEY, GITHUB_ORG/REPO
+set -a; . ./.env; set +a
 ./scripts/check-env.sh
-./scripts/prewarm.sh              # night before, on good wifi; leaves everything cached and built
-stackql-deploy build stacks/golden-path dev --env-file .env     # repo on the golden path before act 3
-./embedded/target/release/steward check                         # one warm model call so the first on stage is not the first of the day
+./scripts/prewarm.sh                                        # night before, on good wifi
+stackql-deploy build stacks/service-footprint dev --env-file .env    # estate converged (27 s from nothing, ~40 s to re-converge)
+./embedded/target/release/steward check                             # one warm model call (about 55 s)
 export PATH="$PWD/embedded/target/release:$PATH"
 clear
 ```
 
-Terminal: 80x24 visible, large font, high contrast. Two tabs: `demo` (everything below) and `spare` (a second shell already in the repo root, .env sourced).
+Terminal: 80x24 visible, large font, high contrast. Two tabs: `demo` (everything below) and `spare` (second shell, repo root, `.env` exported).
 
 ## Act 1 - StackQL primer (about 7 minutes)
 
@@ -46,11 +48,8 @@ Ctrl-D to leave the shell.
 
 # 3. same engine, Postgres wire protocol, any pg client
 ./primer/03-srv-psql.sh
-```
 
-Optional flourish if AWS creds are in `.env` (skip otherwise):
-
-```sh
+# 4. the second plane, one query: the instance the edge points at (AWS + Cloudflare in one statement)
 stackql exec --approot ~/.stackql "$(grep -v '^--' primer/queries/06-cross-provider.iql | tr '\n' ' ')"
 ```
 
@@ -62,21 +61,24 @@ Slide: How to use StackQL (Platform Automation row).
 # Rust binary, no Python
 stackql-deploy info
 
-# the golden path as data
-cat stacks/golden-path/stackql_manifest.yml
-cat stacks/golden-path/resources/label.iql
+# a service's footprint as data: SG + instance in AWS, A record in Cloudflare
+cat stacks/service-footprint/stackql_manifest.yml
+cat stacks/service-footprint/resources/dns_record.iql
 
 # what would run
-stackql-deploy build stacks/golden-path dev --env-file .env --dry-run --show-queries
+stackql-deploy build stacks/service-footprint dev --env-file .env --dry-run --show-queries
 
-# converge (already converged from pre-flight: every resource reports "in the desired state")
-stackql-deploy build stacks/golden-path dev --env-file .env
+# converge (already converged from pre-flight: every resource "in the desired state", footprint_ok=true)
+stackql-deploy build stacks/service-footprint dev --env-file .env
 
 # tests are the same checks
-stackql-deploy test stacks/golden-path dev --env-file .env
+stackql-deploy test stacks/service-footprint dev --env-file .env
+
+# it is a real web server behind a real DNS name
+curl http://rust-demo.stackql.xyz/
 ```
 
-Do not run `teardown` on stage unless there is time; if you do, run `build` again straight after so act 3 starts from a converged repo.
+Do not run `teardown` on stage (terminating and recreating the instance takes a minute and changes the IP); `build` from nothing takes about 30 s if you want to show it in the `spare` tab.
 
 ## Act 3 - embedded MCP in a Rust application (about 15 minutes)
 
@@ -98,7 +100,7 @@ minimal
 ls ~/.stackql/mcp-server-bin/*/
 ```
 
-Say: `Mode::ReadOnly` is the safety story in one line, enforced by the server. To show a real first-run download, run `spare` tab: `STACKQL_MCP_VERSION=0.10.591 minimal` (a release not yet cached) while talking.
+Say: `Mode::ReadOnly` is the safety story in one line, enforced by the server.
 
 Step 2, sidecar vs vendored (slides SIDECAR VS VENDORED, VENDORED DETAILED):
 
@@ -111,44 +113,45 @@ cat embedded/minimal-vendored/build.rs
 ls -lh embedded/target/release/minimal embedded/target/release/minimal-vendored
 
 # a clean machine: fresh HOME, the server still comes from inside the binary
-HOME=$(mktemp -d) minimal-vendored     # server extracts and starts; the query then wants the github provider pulled
+HOME=$(mktemp -d) minimal-vendored
 ```
 
-Say: sidecar resolves the latest server release and verifies sha256; vendored ships the bytes. Same builder either side.
-
-Step 3, steward (slide DEMO):
+Step 3, steward (slide DEMO). Start from the agent and work backwards: what are we giving it agency over?
 
 ```sh
-# what the agent gets: the embedded server, its tools, no model call yet
+# what the agent gets: the embedded server, three providers pulled, 16 tools, no model call yet
 steward preflight
 
-# the policy is data
-cat embedded/steward/policies/golden-path.md
+# the policy is data: five controls across AWS and Cloudflare, with the SQL shapes for each fix
+cat embedded/steward/policies/service-footprint.md
 
-# read-only: report drift against actual state (repo is converged, expect PASS on 1-3, hygiene notes on 4)
+# read-only: report against actual state (estate is converged, expect 5 x PASS in about a minute)
 steward check
 ```
 
-Introduce drift, in the `spare` tab or on stage:
+Introduce drift, in the `spare` tab or on stage (each is one StackQL statement, shown as it runs):
 
 ```sh
-./scripts/drift.sh
+# strip the owner tag, open 22 to the world, delete the A record, add a dangling record
+./scripts/drift-footprint.sh tag ssh edge dangling
 ```
 
 ```sh
-# read-only again: DRIFT on topics and labels, proposed SQL, no writes possible
+# read-only again: four DRIFTs with the SQL that would fix each; no write is possible in this mode
 steward check
 
-# safe mode: the server asks before each write, you approve at the terminal
+# safe mode: the server asks before every write; you approve at the terminal
 steward fix
 ```
 
-At each `[approval] allow this write? [y/N]` read the SQL aloud, answer `y`. Decline one (`n`) if there is time, to show the agent report a refused fix. Then:
+At each `[approval] allow this write? [y/N]` read the SQL aloud and answer `y`. Four prompts: a tag patch (awscc UPDATE), a rule removal (awscc DELETE), the A record recreated with the IP the agent read from AWS (cloudflare INSERT), the dangling record removed (cloudflare DELETE). Decline one with `n` if there is time; the agent reports it as refused and moves on. About two minutes end to end.
 
 ```sh
+# the modes table, live: delete_safe lets creates and updates through, only deletes ask
+steward --mode delete_safe sql --write "DELETE FROM cloudflare.dns.records WHERE zone_id = '$CLOUDFLARE_ZONE_ID' AND dns_record_id = 'not-a-real-id'"   # answer n
+
 # confirm with the deterministic path (no model)
-steward sql "SELECT name, color FROM github.issues.labels WHERE owner='$GITHUB_ORG' AND repo='$GITHUB_REPO' AND name = 'security'"
-stackql-deploy test stacks/golden-path dev --env-file .env
+stackql-deploy test stacks/service-footprint dev --env-file .env
 ```
 
 The single-binary reveal:
@@ -158,18 +161,17 @@ ls -lh embedded/target/vendored/release/steward
 HOME=$(mktemp -d) embedded/target/vendored/release/steward preflight    # clean machine: server from inside the binary
 ```
 
-With wifi off and the real HOME (providers already pulled by prewarm), `steward preflight` and `steward sql "SELECT ..."` still start; only the calls out to GitHub and Anthropic need the network.
-
-Say: one file, the StackQL engine inside, no downloads, and it just answered questions about a live estate. Then the safety modes: ReadOnly -> Safe -> DeleteSafe -> FullAccess, opt-in via `.mode(...)`, and every tool call is a SQL statement you can read on stderr.
+Say: one file, the StackQL engine inside, no downloads, and it just changed two clouds with a human approving each statement. Every tool call was a SQL statement you could read on stderr.
 
 ## Close
 
-Slide: STACKQL >> (thank you). The ask: `cargo add stackql-mcp`, star [stackql/stackql](https://github.com/stackql/stackql) and this repo, run `steward check` against your own org tonight (it needs zero credentials for reads), and send a policy or a provider example as a pull request.
+Slide: STACKQL >> (thank you). The ask: `cargo add stackql-mcp`, star [stackql/stackql](https://github.com/stackql/stackql) and this repo, write a policy for your own estate (`steward --policy my-policy.md --provider ...`; the GitHub one needs zero credentials), send it as a PR.
 
 ## Fallbacks
 
-- No wifi: every binary starts offline after `prewarm.sh`, but act 1 and act 3 need GitHub (and act 3 Anthropic) reachable to answer anything. Switch to the recorded run (link in `slides/notes.md`) and narrate over it.
-- GitHub rate limit (HTTP 403 in a result): you are on `null_auth` at 60/hour. Source `.env` with `STACKQL_GITHUB_USERNAME` / `STACKQL_GITHUB_PASSWORD` for 5000/hour.
-- Anthropic error or slow: `steward sql --write "INSERT INTO github.issues.labels (owner, repo, name, color, description) SELECT '$GITHUB_ORG', '$GITHUB_REPO', 'security', 'b60205', 'Security posture or vulnerability'"` shows the same approval prompt with no model in the path; `stackql-deploy build` re-converges the repo.
-- Wrong state at the start of act 3: `stackql-deploy build stacks/golden-path dev --env-file .env` puts it back.
-- Model wanders: `steward check --max-turns 12` or ask a narrower question with `steward ask "..."`.
+- No wifi: every binary starts offline after `prewarm.sh`; acts 1 to 3 need AWS, Cloudflare and Anthropic reachable to answer. Switch to the recording (link in `slides/notes.md`) and narrate.
+- Anthropic slow or down: `steward sql --write "<statement from the policy>"` shows the approval prompt with no model in the path; `stackql-deploy build stacks/service-footprint dev --env-file .env` re-converges everything in about 40 s.
+- Wrong state at the start of act 3: the same `build` command.
+- GitHub rate limit in act 1 (HTTP 403): `.env` has `STACKQL_GITHUB_USERNAME` / `STACKQL_GITHUB_PASSWORD`, make sure it is exported.
+- Model wanders: `steward check --max-turns 12`, or a narrower `steward ask "..."`.
+- A terminated instance still shows its tags for up to an hour after a teardown; the policy tells the agent to ignore terminated instances, and `drift-footprint.sh` only targets a running one.

@@ -8,7 +8,7 @@ One engine, several ways to consume it. Everything here runs against public GitH
 | `02-exec-formats.sh` | `stackql exec` with `--output table`, `json`, `jsonl`, `csv`, `-H` (no header), `-d` (delimiter), piped into `column` and `jq` |
 | `03-srv-psql.sh` | `stackql srv` (Postgres wire protocol) and `psql` running the same query |
 
-Query files in `queries/` are numbered in demo order and each carries a comment saying which slide it belongs to. `06-cross-provider.iql` needs AWS credentials and is an optional flourish.
+Query files in `queries/` are numbered in demo order and each carries a comment saying which slide it belongs to. `06-cross-provider.iql` joins Cloudflare DNS records to the EC2 instances they point at; it needs the AWS and Cloudflare credentials from `.env` and is the bridge into acts 2 and 3.
 
 Notes that matter on the day:
 

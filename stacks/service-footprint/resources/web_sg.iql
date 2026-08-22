@@ -1,0 +1,58 @@
+/*+ exists */
+WITH tagged AS (
+  SELECT split_part(ResourceARN, '/', 2) AS security_group_id
+  FROM awscc.tagging.tagged_resources
+  WHERE region = '{{ region }}'
+  AND TagFilters = '{{ identity_tags | to_aws_tag_filters }}'
+  AND ResourceTypeFilters = '["ec2:security-group"]'
+),
+sgs AS (
+  SELECT id AS security_group_id
+  FROM awscc.ec2.security_groups_list_only
+  WHERE region = '{{ region }}'
+)
+SELECT s.security_group_id
+FROM sgs s INNER JOIN tagged t ON s.security_group_id = t.security_group_id
+
+/*+ create */
+INSERT INTO awscc.ec2.security_groups (
+  GroupName, GroupDescription, VpcId, SecurityGroupIngress, SecurityGroupEgress, Tags, region
+)
+SELECT
+  '{{ group_name }}',
+  '{{ group_description }}',
+  '{{ vpc_id }}',
+  '{{ ingress }}',
+  '{{ egress }}',
+  '{{ sg_tags }}',
+  '{{ region }}'
+RETURNING *
+
+/*+ statecheck, retries=5, retry_delay=5 */
+SELECT COUNT(*) AS count FROM (
+  SELECT
+    AWS_POLICY_EQUAL(tags, '{{ sg_tags }}') AS test_tags,
+    AWS_POLICY_EQUAL(security_group_ingress, '{{ ingress }}') AS test_ingress
+  FROM awscc.ec2.security_groups
+  WHERE Identifier = '{{ this.security_group_id }}'
+  AND region = '{{ region }}'
+  AND group_name = '{{ group_name }}'
+) t
+WHERE test_tags = 1 AND test_ingress = 1
+
+/*+ update */
+UPDATE awscc.ec2.security_groups
+SET PatchDocument = string('{{ {
+    "Tags": sg_tags,
+    "SecurityGroupIngress": ingress
+  } | generate_patch_document }}')
+WHERE Identifier = '{{ this.security_group_id }}'
+AND region = '{{ region }}'
+
+/*+ exports */
+SELECT '{{ this.security_group_id }}' AS security_group_id
+
+/*+ delete, retries=12, retry_delay=10 */
+DELETE FROM awscc.ec2.security_groups
+WHERE Identifier = '{{ this.security_group_id }}'
+AND region = '{{ region }}'
