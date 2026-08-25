@@ -12,10 +12,19 @@ set -a; . ./.env; set +a
 ./scripts/check-env.sh
 ./scripts/prewarm.sh                                        # night before, on good wifi
 stackql-deploy build stacks/service-footprint dev --env-file .env    # estate converged (27 s from nothing, ~40 s to re-converge)
-./embedded/target/release/steward check                             # one warm model call (about 55 s)
+stackql-deploy build stacks/golden-path dev --env-file .env          # the GitHub variant converged too
+./embedded/target/release/steward check                             # one warm model call (~35 s when all PASS)
 export PATH="$PWD/embedded/target/release:$PATH"
 clear
 ```
+
+Checklist the rehearsal keeps catching:
+
+- [ ] `stackql-deploy` and `psql` on PATH (check-env.sh says so)
+- [ ] `.env` exported in BOTH tabs, not just passed as `--env-file`
+- [ ] GitHub token in `.env` is authorised for the `stackql` org (a fine-grained token scoped elsewhere reads fine but gets 403/404 on writes)
+- [ ] `curl http://rust-demo.stackql.xyz/` returns the page (instance takes ~90 s after a fresh build to serve)
+- [ ] recording of a full run saved locally (the ultimate fallback)
 
 Terminal: 80x24 visible, large font, high contrast. Two tabs: `demo` (everything below) and `spare` (second shell, repo root, `.env` exported).
 
@@ -116,7 +125,7 @@ ls -lh embedded/target/release/minimal embedded/target/release/minimal-vendored
 HOME=$(mktemp -d) minimal-vendored
 ```
 
-Step 3, steward (slide DEMO). Start from the agent and work backwards: what are we giving it agency over?
+Step 3, steward (slide DEMO). Start from the agent and work backwards: what are we giving it agency over? Read everything (`read_only`); write what the policy names, one statement at a time, with a human approving (`safe`); never what the mode forbids. Two builds of the same source are on PATH order here: use the sidecar build (`embedded/target/release/steward`) for this step, the vendored one for the reveal.
 
 ```sh
 # what the agent gets: the embedded server, three providers pulled, 16 tools, no model call yet
@@ -125,7 +134,7 @@ steward preflight
 # the policy is data: five controls across AWS and Cloudflare, with the SQL shapes for each fix
 cat embedded/steward/policies/service-footprint.md
 
-# read-only: report against actual state (estate is converged, expect 5 x PASS in about a minute)
+# read-only: report against actual state (estate is converged, expect 5 x PASS, ~35 s)
 steward check
 ```
 
@@ -140,11 +149,12 @@ Introduce drift, in the `spare` tab or on stage (each is one StackQL statement, 
 # read-only again: four DRIFTs with the SQL that would fix each; no write is possible in this mode
 steward check
 
-# safe mode: the server asks before every write; you approve at the terminal
-steward fix
+# safe mode: the server asks before every write; you approve at the terminal.
+# Run it on the VENDORED binary: the single file is now doing the real work.
+embedded/target/vendored/release/steward fix
 ```
 
-At each `[approval] allow this write? [y/N]` read the SQL aloud and answer `y`. Four prompts: a tag patch (awscc UPDATE), a rule removal (awscc DELETE), the A record recreated with the IP the agent read from AWS (cloudflare INSERT), the dangling record removed (cloudflare DELETE). Decline one with `n` if there is time; the agent reports it as refused and moves on. About two minutes end to end.
+At each `[approval] allow this write? [y/N]` read the SQL aloud and answer `y`. Four prompts: a tag patch (awscc UPDATE), a rule removal (awscc DELETE), the A record recreated with the IP the agent read from AWS (cloudflare INSERT), the dangling record removed (cloudflare DELETE). Decline one with `n` if there is time; the agent reports it as refused and moves on. 75 to 110 s end to end.
 
 ```sh
 # the modes table, live: delete_safe lets creates and updates through, only deletes ask
@@ -154,14 +164,23 @@ steward --mode delete_safe sql --write "DELETE FROM cloudflare.dns.records WHERE
 stackql-deploy test stacks/service-footprint dev --env-file .env
 ```
 
-The single-binary reveal:
+The single-binary reveal (the fix you just ran WAS this binary):
 
 ```sh
-ls -lh embedded/target/vendored/release/steward
-HOME=$(mktemp -d) embedded/target/vendored/release/steward preflight    # clean machine: server from inside the binary
+# same source, two builds: sidecar app vs app-with-engine-inside
+ls -lh embedded/target/release/steward embedded/target/vendored/release/steward
+
+# sidecar acquired the server into the shared cache on first run
+ls ~/.stackql/mcp-server-bin/
+
+# vendored: a fresh HOME has nothing, it still starts (server extracts from the binary;
+# the provider pull needs the network, the server acquisition does not)
+HOME=$(mktemp -d) embedded/target/vendored/release/steward preflight
 ```
 
 Say: one file, the StackQL engine inside, no downloads, and it just changed two clouds with a human approving each statement. Every tool call was a SQL statement you could read on stderr.
+
+Optional extras if the room wants more (both in `embedded/`, both on the same crate): `auditron scan --no-tui` runs the YAML control pack in `controls/` against the stackql org deterministically (no model); `stackql-agent --persona sre -p "..."` is the free-form rig agent (~30 s a question).
 
 ## Close
 
@@ -169,9 +188,10 @@ Slide: STACKQL >> (thank you). The ask: `cargo add stackql-mcp`, star [stackql/s
 
 ## Fallbacks
 
-- No wifi: every binary starts offline after `prewarm.sh`; acts 1 to 3 need AWS, Cloudflare and Anthropic reachable to answer. Switch to the recording (link in `slides/notes.md`) and narrate.
+- No wifi: every binary starts offline after `prewarm.sh`; acts 1 to 3 need AWS, Cloudflare and Anthropic reachable to answer. Switch to the recording and narrate.
 - Anthropic slow or down: `steward sql --write "<statement from the policy>"` shows the approval prompt with no model in the path; `stackql-deploy build stacks/service-footprint dev --env-file .env` re-converges everything in about 40 s.
 - Wrong state at the start of act 3: the same `build` command.
 - GitHub rate limit in act 1 (HTTP 403): `.env` has `STACKQL_GITHUB_USERNAME` / `STACKQL_GITHUB_PASSWORD`, make sure it is exported.
 - Model wanders: `steward check --max-turns 12`, or a narrower `steward ask "..."`.
 - A terminated instance still shows its tags for up to an hour after a teardown; the policy tells the agent to ignore terminated instances, and `drift-footprint.sh` only targets a running one.
+- GitHub writes fail with 403/404 but reads work: the token is not authorised for the `stackql` org; use a classic PAT with `repo` scope or a fine-grained token granted on the org.

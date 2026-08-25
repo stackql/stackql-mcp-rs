@@ -6,7 +6,7 @@ if [ -f "$_ROOT/.env" ]; then
   . "$_ROOT/.env"
   set +a
 fi
-export GITHUB_ORG="${GITHUB_ORG:-stackql-labs}"
+export GITHUB_ORG="${GITHUB_ORG:-stackql}"
 export GITHUB_REPO="${GITHUB_REPO:-rust-embedded-mcp-with-stackql}"
 
 STACKQL_ARGS=(--approot "${STACKQL_APPROOT:-$HOME/.stackql}")
