@@ -64,7 +64,9 @@ async fn main() -> Result<()> {
     // the first run and launches it. This is the one line that differs from
     // the sidecar agent. read_only: mutations are refused by the server
     // itself. AWS credentials come from the environment.
-    eprintln!("finops-agent-vendored: starting the embedded StackQL MCP server (vendored, read_only)");
+    eprintln!(
+        "finops-agent-vendored: starting the embedded StackQL MCP server (vendored, read_only)"
+    );
     let server = StackqlMcp::builder()
         .mode(Mode::ReadOnly)
         .bundle_bytes(stackql_mcp::include_bundle!())
