@@ -1,0 +1,67 @@
+# Act 2 (slide "How to use StackQL", Platform Automation row), and what backs
+# the act 1 cross-provider query (primer/queries/cross-provider.iql).
+# A web server in the default VPC with an A record on the demo zone, built with
+# the native aws provider (EC2 Query API, no awscc) and the cloudflare provider.
+# Dead simple: four resources, identity by natural keys (group name, security
+# group membership, record name), no tags.
+#
+# Needs in .env: AWS_REGION, AWS_VPC_ID, AWS_SUBNET_ID (a subnet that
+# auto-assigns public IPs, the default VPC's do), AWS_AMI_ID (Amazon Linux 2023),
+# CLOUDFLARE_API_TOKEN, CLOUDFLARE_ZONE_ID, DEMO_DOMAIN.
+version: 1
+name: aws-webserver
+description: an EC2 web server in the default VPC with a Cloudflare A record, native aws provider
+providers:
+  - aws
+  - cloudflare
+globals:
+  - name: region
+    value: "{{ AWS_REGION }}"
+  - name: vpc_id
+    value: "{{ AWS_VPC_ID }}"
+  - name: subnet_id
+    value: "{{ AWS_SUBNET_ID }}"
+  - name: ami_id
+    value: "{{ AWS_AMI_ID }}"
+  - name: zone_id
+    value: "{{ CLOUDFLARE_ZONE_ID }}"
+  - name: record_name
+    value: "webserver-{{ stack_env }}.{{ DEMO_DOMAIN }}"
+resources:
+  - name: security_group
+    description: the instance's security group, and how the stack finds its instance
+    props:
+      - name: group_name
+        value: "{{ stack_name }}-{{ stack_env }}-sg"
+      - name: group_description
+        value: "{{ stack_name }} web server ({{ stack_env }})"
+    exports:
+      - group_id
+
+  - name: web_server
+    description: one t3.micro running httpd, launched into the default VPC subnet
+    props:
+      - name: instance_type
+        value: t3.micro
+      - name: user_data
+        value: |
+          #!/bin/bash
+          dnf install -y httpd
+          systemctl enable --now httpd
+          echo "<h1>{{ record_name }}</h1><p>stackql-deploy on AWS, native aws provider</p>" > /var/www/html/index.html
+    exports:
+      - instance_id
+
+  - name: web_server_ip
+    description: the public IP the record must point at
+    type: query
+    exports:
+      - public_ip
+
+  - name: dns_record
+    description: an A record on the demo zone pointing at the instance
+    props:
+      - name: record_ttl
+        value: 300
+    exports:
+      - dns_record_id

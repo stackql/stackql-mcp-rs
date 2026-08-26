@@ -26,13 +26,15 @@ need stackql        "https://stackql.io/docs/installing-stackql"
 need stackql-deploy "cargo install stackql-deploy, or get-stackql-deploy.io"
 need cargo          "rustup: https://rustup.rs (MSRV 1.88)"
 echo "optional:"
-want psql   "act 1 step 3 (stackql srv); brew install libpq"
-want jq     "act 1 pipes"
-want column "act 1 pipes (util-linux / bsdmainutils)"
+want psql    "act 1 step 3 (stackql srv); brew install libpq"
+want jq      "act 1 pipes"
+want column  "act 1 pipes (util-linux / bsdmainutils)"
+want node    "act 1 step 3 (pgwire-lite app); https://nodejs.org"
+want python3 "act 1 step 4 (pystackql app); pip install pystackql pandas"
 
 echo "credentials (.env):"
 for v in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_REGION AWS_VPC_ID AWS_SUBNET_ID AWS_AMI_ID \
-         CLOUDFLARE_API_TOKEN CLOUDFLARE_ZONE_ID ANTHROPIC_API_KEY \
+         CLOUDFLARE_API_TOKEN CLOUDFLARE_ZONE_ID ANTHROPIC_API_KEY OPENAI_API_KEY \
          STACKQL_GITHUB_USERNAME STACKQL_GITHUB_PASSWORD; do
   if [ -n "${!v:-}" ]; then printf '  set     %s\n' "$v"; else printf '  unset   %s\n' "$v"; fi
 done

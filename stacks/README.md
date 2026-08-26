@@ -2,7 +2,18 @@
 
 `stackql-deploy` is the declarative side of StackQL: a stack is a manifest plus `.iql` resource files, and `build` / `test` / `teardown` converge live state onto it with no state file. The current release is a Rust binary (`stackql-deploy info` shows the version and no Python anywhere). Argument order is `<command> <stack_dir> <stack_env> [flags]`; `--show-queries` prints the rendered SQL before each call; it needs `stackql` on PATH (`cargo install stackql-deploy` or get-stackql-deploy.io).
 
-Two stacks. `service-footprint/` is the one in the talk; `golden-path/` is the GitHub variant for people without cloud credentials.
+Three stacks. `service-footprint/` is the one in the talk; `aws-webserver/` is the same idea done with the native `aws` provider only (four resources, no tags, the stack that backs the act 1 cross-provider query); `golden-path/` is the GitHub variant for people without cloud credentials.
+
+## aws-webserver
+
+A `t3.micro` running httpd in the default VPC, its security group, and an A record `webserver-<env>.stackql.xyz` pointing at its public IP, written entirely with `aws` (EC2 Query API) and `cloudflare`. Identity by natural key (group name, security-group membership, record name) because the native provider cannot tag. Clean build about 25 s, re-converge 3 s. See [aws-webserver/README.md](aws-webserver/README.md) for the resource table and the list of what the native provider can and cannot do (no tags, no ingress rules, no subnet public-IP attribute, so port 80 stays closed; the query still works).
+
+```sh
+stackql-deploy build stacks/aws-webserver dev --env-file .env --dry-run --show-queries
+stackql-deploy build stacks/aws-webserver dev --env-file .env
+stackql-deploy test  stacks/aws-webserver dev --env-file .env
+stackql-deploy teardown stacks/aws-webserver dev --env-file .env
+```
 
 ## service-footprint
 
@@ -31,9 +42,9 @@ Measured: clean build 27 s, re-converge after drift about 40 s (the instance sta
 
 Authoring notes (aws, awscc, cloudflare):
 
-- Read with `aws` (describe views: `aws.ec2.instances`, `aws.ec2.tags`, `aws.ec2.security_group_rules`), write with `awscc` (Cloud Control): `INSERT` creates, `UPDATE ... SET PatchDocument = string('[json patch]') WHERE Identifier = ...` modifies, `DELETE ... WHERE Identifier = ...` removes. The legacy `aws` EC2 Query-API writes (`CreateTags`) are rejected by AWS in the current provider.
+- Read with `aws` (describe views: `aws.ec2.instances`, `aws.ec2.tags`, `aws.ec2.security_group_rules`), write with `awscc` (Cloud Control): `INSERT` creates, `UPDATE ... SET PatchDocument = string('[json patch]') WHERE Identifier = ...` modifies, `DELETE ... WHERE Identifier = ...` removes. The native `aws` EC2 Query-API writes work for scalar parameters (`create_security_group`, `run_instances` with a single `SecurityGroupId`, `terminate_instances`, `create_vpc`, `RETURNING group_id`) but not for list or nested ones (`Tag`, `TagSpecification`, `IpPermissions`, `MapPublicIpOnLaunch`): the engine sends them as one JSON string where the API wants `Name.1.Field=...`, and AWS answers `InvalidRequest`. `aws-webserver/` is built inside those limits.
 - `cloudflare.dns.zones_dns_records` lists and creates records; `cloudflare.dns.records` edits and deletes by `dns_record_id`. `cloudflare.dns.dns_records` maps to the export endpoint and is not a row source.
-- The engine sends `UPDATE ... SET ttl = 300` as the string `"300"`, which Cloudflare rejects, and `ttl` is required on the edit method, so a record cannot be re-pointed by UPDATE today; the stack has no `update` anchor for `dns_record` and steward's policy treats a re-point as delete plus insert.
+- The engine sends `UPDATE ... SET ttl = 300` as the string `"300"`, which Cloudflare rejects, and `ttl` is required on the edit method, so a record cannot be re-pointed by UPDATE today; the stack has no `update` anchor for `dns_record`; a re-point is delete plus insert.
 - `awscc` mutations are asynchronous; statechecks and deletes carry retries.
 
 ## golden-path (GitHub)
@@ -47,7 +58,7 @@ Declares what a repository on our golden path looks like:
 | `default_branch_ruleset` | a ruleset on the default branch that blocks deletion and force pushes |
 | `conformance` | a `query` resource: one row summarising the checks, exported as `golden_path_ok` |
 
-It targets `GITHUB_ORG` / `GITHUB_REPO` from `.env` (defaults in `.env.example` point at this repo). `steward --policy golden-path` watches the same repo; `scripts/drift.sh` introduces drift. Needs `STACKQL_GITHUB_USERNAME` / `STACKQL_GITHUB_PASSWORD` in `.env` with a token that can administer the target repo for `build`; `--dry-run` and reads need no credentials.
+It targets `GITHUB_ORG` / `GITHUB_REPO` from `.env` (defaults in `.env.example` point at this repo). `scripts/drift.sh` introduces drift for a re-converge demo. Needs `STACKQL_GITHUB_USERNAME` / `STACKQL_GITHUB_PASSWORD` in `.env` with a token that can administer the target repo for `build`; `--dry-run` and reads need no credentials.
 
 ```sh
 stackql-deploy info

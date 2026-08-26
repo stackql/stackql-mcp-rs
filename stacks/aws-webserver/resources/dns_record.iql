@@ -1,0 +1,30 @@
+/*+ exists */
+SELECT id AS dns_record_id
+FROM cloudflare.dns.zones_dns_records
+WHERE zone_id = '{{ zone_id }}'
+AND name = '{{ record_name }}'
+AND type = 'A'
+
+/*+ create */
+INSERT INTO cloudflare.dns.zones_dns_records (zone_id, name, type, content, ttl, proxied, comment)
+SELECT '{{ zone_id }}', '{{ record_name }}', 'A', '{{ public_ip }}', {{ record_ttl }}, false, 'managed by stackql-deploy ({{ stack_name }}/{{ stack_env }})'
+
+/*+ statecheck, retries=3, retry_delay=5 */
+SELECT COUNT(*) AS count
+FROM cloudflare.dns.zones_dns_records
+WHERE zone_id = '{{ zone_id }}'
+AND name = '{{ record_name }}'
+AND type = 'A'
+AND content = '{{ public_ip }}'
+
+/*+ exports */
+SELECT id AS dns_record_id
+FROM cloudflare.dns.zones_dns_records
+WHERE zone_id = '{{ zone_id }}'
+AND name = '{{ record_name }}'
+AND type = 'A'
+
+/*+ delete */
+DELETE FROM cloudflare.dns.records
+WHERE zone_id = '{{ zone_id }}'
+AND dns_record_id = '{{ this.dns_record_id }}'

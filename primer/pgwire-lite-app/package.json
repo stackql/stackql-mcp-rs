@@ -1,0 +1,13 @@
+{
+  "name": "stackql-primer-pgwire-lite-app",
+  "version": "1.0.0",
+  "description": "Node app querying GitHub via a stackql server over the postgres wire protocol",
+  "type": "module",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js"
+  },
+  "dependencies": {
+    "@stackql/pgwire-lite": "^1.0.0"
+  }
+}

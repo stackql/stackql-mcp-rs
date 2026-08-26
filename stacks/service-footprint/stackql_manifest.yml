@@ -1,7 +1,7 @@
 # Act 2 (credentialed variant), slide "How to use StackQL" (Platform Automation row).
 # One service's footprint across two planes: compute in AWS (security group +
 # instance, tagged) and its edge in Cloudflare (an A record on the demo zone
-# pointing at the instance). stackql-deploy converges it; steward (act 3)
+# pointing at the instance). stackql-deploy converges it; sre-agent-sidecar (act 3)
 # watches it for drift across both providers.
 #
 # Needs in .env: AWS_REGION, AWS_VPC_ID, AWS_SUBNET_ID (auto-assign public IP),
@@ -40,7 +40,7 @@ globals:
       - Key: 'stackql:stack-env'
         Value: "{{ stack_env }}"
   # global_tags are the desired state: identity plus the governance tags
-  # steward checks (owner, cost-centre). Removing one is drift, not a new
+  # the sre-agent-sidecar sweep checks (owner, cost-centre). Removing one is drift, not a new
   # resource.
   - name: global_tags
     value:

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Act 3: "someone changed it in the console". Introduces two pieces of drift
-# on the target repo so steward has something to find and fix:
+# on the target repo for a re-converge demo:
 #   - deletes the `security` label
 #   - drops `golden-path` from the topics
 # Needs STACKQL_GITHUB_USERNAME / STACKQL_GITHUB_PASSWORD in .env.
-# Undo: ./embedded/target/release/steward fix   (or: stackql-deploy build ...)
+# Undo: stackql-deploy build stacks/golden-path dev --env-file .env
 set -euo pipefail
 . "$(dirname "$0")/_env.sh"
 

@@ -1,0 +1,6 @@
+{
+  // The Rust workspace is not at the repo root; tell rust-analyzer where it is.
+  "rust-analyzer.linkedProjects": ["embedded/Cargo.toml"],
+  // Same lint bar as CI (cargo clippy -D warnings).
+  "rust-analyzer.check.command": "clippy"
+}

@@ -1,0 +1,9 @@
+-- is the default branch of each key repo protected? (a JOIN across two resources)
+-- the org and the IN list of key repos are rendered from vars.jsonnet
+SELECT b.repo, b.name AS branch, b.protected
+FROM github.repos.branches b
+JOIN github.repos.repos r ON r.name = b.repo
+WHERE r.org = '{{ .org }}'
+  AND b.owner = '{{ .org }}'
+  AND b.repo IN {{ .key_repos }}
+  AND b.name = r.default_branch;

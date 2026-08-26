@@ -1,0 +1,18 @@
+[package]
+name = "sre-agent-sidecar"
+version = "0.1.0"
+description = "SRE assurance agent: Claude + the StackQL MCP server embedded as a sidecar"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+stackql-mcp = { workspace = true }          # default feature: sidecar
+rig = { workspace = true }
+rmcp = { workspace = true }
+tokio = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+futures = { workspace = true }

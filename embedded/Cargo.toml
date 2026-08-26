@@ -1,9 +1,11 @@
-# Act 3 workspace: the smallest possible embedding (minimal), the same thing
-# vendored (minimal-vendored), the golden-path agent (steward), and the two
-# reference apps that shipped with the crate (auditron, stackql-agent).
+# Act 3 workspace: two agents on the same crate, one per way of embedding the
+# StackQL MCP server. sre-agent-sidecar acquires the server as a sidecar and talks to
+# Claude; finops-agent-vendored vendors the server straight into the binary and talks
+# to GPT-5. Model, prompts (compiled-in markdown), context and MCP tools in
+# each; the loop is rig's.
 [workspace]
 resolver = "2"
-members = ["minimal", "minimal-vendored", "steward", "auditron", "stackql-agent"]
+members = ["sre-agent-sidecar", "finops-agent-vendored"]
 
 [workspace.package]
 edition = "2021"
@@ -14,11 +16,16 @@ publish = false
 [workspace.dependencies]
 # Version-locked to the stackql release it embeds; pin the minor.
 stackql-mcp = "0.10"
-rmcp = { version = "1.7", default-features = false, features = ["client", "transport-async-rw"] }
+# rig-core 0.40 is the last release with the rmcp feature (0.41 dropped it);
+# it and stackql-mcp resolve on the same rmcp 1.x, so the connected client the
+# crate hands back plugs straight into rig's agent builder.
+rig = { package = "rig-core", version = "0.40", features = ["rmcp"] }
+rmcp = { version = "1.8", default-features = false, features = ["client"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 serde_json = "1"
 anyhow = "1"
-
+clap = { version = "4", features = ["derive", "env"] }
+futures = "0.3"
 
 [profile.release]
 strip = true

@@ -1,7 +1,8 @@
 # Build, lint and smoke the act-3 workspace against the published crates.io
-# stackql-mcp crate. Everything except 'agent-live' needs zero credentials
-# (github null_auth). 'agent-live' runs one real one-shot agent prompt and
-# only when the ANTHROPIC_API_KEY secret is configured.
+# stackql-mcp crate. 'build-test' needs no credentials: the --check preflights
+# start the embedded server, pull the providers and list the tools without a
+# model call. 'agent-live' asks each agent one question that needs no cloud
+# credentials, and only when the matching API key secret is configured.
 name: ci
 
 on:
@@ -32,39 +33,46 @@ jobs:
           workspaces: embedded
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      # Builds the vendored programs too: their build.rs fetches the pinned
-      # server bundle (sha256-verified) so include_bundle!() has bytes.
+      # Builds the vendored agent too: its build.rs fetches the pinned server
+      # bundle (sha256-verified) so include_bundle!() has bytes.
       - run: cargo build --workspace
-      - name: minimal (sidecar download, tools, one SELECT, refused write)
-        run: ./target/debug/minimal
-      # auditron is a compliance gate: exit 0 = all controls pass, exit 2 =
-      # controls failed (real findings against the live org - expected here).
-      # CI asserts it RUNS; only a crash (any other exit) fails the job.
-      - name: auditron (github-core control pack, zero credentials)
-        working-directory: .
-        run: ./embedded/target/debug/auditron scan --no-tui || [ $? -eq 2 ]
-      - name: stackql-agent preflight (no model call)
-        run: ./target/debug/stackql-agent --check
+      - name: sre-agent-sidecar preflight (sidecar download, providers, tools; no model call)
+        run: ./target/debug/sre-agent-sidecar --check
+      - name: finops-agent-vendored preflight (vendored extract, provider, tools; no model call)
+        run: ./target/debug/finops-agent-vendored --check
 
   agent-live:
     needs: build-test
     runs-on: ubuntu-latest
-    # Secrets are unavailable in this expression context on forks; the step
-    # guard below is what actually gates the model call.
+    defaults:
+      run:
+        working-directory: embedded
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: embedded
-      - name: one-shot agent prompt (skips without ANTHROPIC_API_KEY)
+      - run: cargo build --workspace
+      # Secrets are unavailable in expression context on forks; the guards
+      # below are what actually gate the model calls.
+      - name: sre-agent-sidecar, one question (skips without ANTHROPIC_API_KEY)
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           if [ -z "$ANTHROPIC_API_KEY" ]; then
-            echo "ANTHROPIC_API_KEY not configured - skipping the live agent run"
+            echo "ANTHROPIC_API_KEY not configured - skipping"
             exit 0
           fi
-          cd embedded
-          cargo run -q -p stackql-agent -- --persona audit \
-            -p "How many public repos does the stackql org have? Answer with the number and the SQL you ran."
+          ./target/debug/sre-agent-sidecar --max-turns 4 \
+            "Call server_info and list_providers, then answer in two lines: which mode is the server in, and which providers are installed? Do not query any provider."
+      - name: finops-agent-vendored, one question (skips without OPENAI_API_KEY)
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "OPENAI_API_KEY not configured - skipping"
+            exit 0
+          fi
+          ./target/debug/finops-agent-vendored --max-turns 4 \
+            "Call server_info and list_providers, then answer in two lines: which mode is the server in, and which providers are installed? Do not query any provider."

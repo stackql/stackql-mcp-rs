@@ -1,0 +1,33 @@
+/*+ exists */
+SELECT instance_id
+FROM aws.ec2.instances
+WHERE region = '{{ region }}'
+AND subnet_id = '{{ subnet_id }}'
+AND JSON_EXTRACT(security_groups, '$.item.groupId') = '{{ group_id }}'
+AND JSON_EXTRACT(state, '$.name') NOT IN ('shutting-down', 'terminated')
+
+/*+ create */
+INSERT INTO aws.ec2.instances (ImageId, InstanceType, MinCount, MaxCount, SubnetId, SecurityGroupId, UserData, region)
+SELECT '{{ ami_id }}', '{{ instance_type }}', 1, 1, '{{ subnet_id }}', '{{ group_id }}', '{{ user_data | base64_encode }}', '{{ region }}'
+
+/*+ statecheck, retries=12, retry_delay=10 */
+SELECT COUNT(*) AS count
+FROM aws.ec2.instances
+WHERE region = '{{ region }}'
+AND subnet_id = '{{ subnet_id }}'
+AND JSON_EXTRACT(security_groups, '$.item.groupId') = '{{ group_id }}'
+AND instance_type = '{{ instance_type }}'
+AND JSON_EXTRACT(state, '$.name') = 'running'
+
+/*+ exports, retries=3, retry_delay=5 */
+SELECT instance_id
+FROM aws.ec2.instances
+WHERE region = '{{ region }}'
+AND subnet_id = '{{ subnet_id }}'
+AND JSON_EXTRACT(security_groups, '$.item.groupId') = '{{ group_id }}'
+AND JSON_EXTRACT(state, '$.name') NOT IN ('shutting-down', 'terminated')
+
+/*+ delete */
+DELETE FROM aws.ec2.instances
+WHERE InstanceId = '{{ this.instance_id }}'
+AND region = '{{ region }}'

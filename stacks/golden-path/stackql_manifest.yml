@@ -1,7 +1,7 @@
 # Act 2, slide "How to use StackQL" (Platform Automation row).
 # The golden path for a repository, declared as data: topics, a standard
 # label set, and a ruleset protecting the default branch. stackql-deploy
-# converges the live repo onto this; steward (act 3) watches for drift.
+# converges the live repo onto this; scripts/drift.sh drifts it for a re-converge demo.
 version: 1
 name: golden-path
 description: golden-path conformance for a GitHub repository (topics, labels, default-branch ruleset)

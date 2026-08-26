@@ -22,6 +22,18 @@ stackql-deploy.log
 /out/
 *.zip
 
+# Act 1 output files (primer/exec.sh) and the server log (primer/srv.sh)
+/repos.jsonl
+/runs.csv
+/repos.psv
+/stackql-srv.log
+
+# Act 1 reference apps
+node_modules/
+package-lock.json
+__pycache__/
+.venv/
+
 # stackql local state when run from inside the repo (Windows builds default the approot to cwd)
 .stackql/
 readline

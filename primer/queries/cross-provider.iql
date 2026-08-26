@@ -1,0 +1,19 @@
+-- two planes in one statement: which EC2 instance does each A record in the
+-- zone point at? The bridge from act 1 into acts 2 and 3.
+-- The zone is looked up by name (cloudflare.zones.zones) and joined to its
+-- records inside a CTE; the CTE is then joined to EC2. A flat three-table JOIN
+-- does not plan in the engine, the CTE does.
+-- zone and region are rendered from footprint-vars.jsonnet (--var from .env);
+-- needs AWS and Cloudflare credentials in the environment
+WITH edge AS (
+  SELECT z.id AS zone_id, r.name AS record, r.content AS ip
+  FROM cloudflare.zones.zones z
+  LEFT JOIN cloudflare.dns.zones_dns_records r ON r.zone_id = z.id
+  WHERE z.name = '{{ .zone }}'
+    AND r.type = 'A'
+)
+SELECT e.record, e.ip, i.instance_id,
+       JSON_EXTRACT(i.state, '$.name') AS state
+FROM edge e
+JOIN aws.ec2.instances i ON i.public_ip_address = e.ip
+WHERE i.region = '{{ .region }}';

@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Act 3 (service-footprint): "someone changed it in the console". Introduces
-# drift across both planes of the service so steward has something to find:
+# drift across both planes of the service so sre-agent-sidecar has something to find:
 #   tag      drop the `owner` tag from the instance            (fix: UPDATE, safe)
 #   ssh      open port 22 to the world on the security group   (fix: DELETE, approved at the terminal)
 #   edge     delete the A record for the service                (fix: INSERT, safe; the IP comes from AWS)
 #   dangling add a second A record pointing at a stale IP      (fix: DELETE, approved at the terminal)
 # Usage: scripts/drift-footprint.sh [tag] [ssh] [edge] [dangling]   (default: tag ssh edge)
 # Needs AWS_* and CLOUDFLARE_API_TOKEN / CLOUDFLARE_ZONE_ID in .env.
-# Undo: ./embedded/target/release/steward fix, or
+# Undo:
 #       stackql-deploy build stacks/service-footprint dev --env-file .env
 set -euo pipefail
 . "$(dirname "$0")/_env.sh"

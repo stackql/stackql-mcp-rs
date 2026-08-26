@@ -1,7 +1,0 @@
--- Act 1, slide "How to use StackQL": the estate as rows.
--- Public data only; github null_auth is enough.
-
-SELECT visibility, archived, COUNT(*) AS repos
-FROM github.repos.repos
-WHERE org = 'stackql'
-GROUP BY visibility, archived;
