@@ -1,40 +1,33 @@
 # Rust-native agentic platform engineering with embedded MCP
 
-Demo code and runbook for the talk of the same name by Jeff Aven at the Rust User Group Melbourne, August 2026. Everything here is a working, repeatable demonstration that lines up with the deck.
+Demo code for a demonstration of Rust-native agentic platform engineering with embedded MCP.
 
-The idea in one paragraph: [StackQL](https://stackql.io) treats cloud and SaaS providers as data sources accessed via SQL. Agents doing platform engineering, SRE and audit work need to query, reason about and act on actual running state, not on state files. The StackQL MCP server is the agent interface to that engine, with a small fixed tool surface and safety modes gating writes. The [`stackql-mcp`](https://crates.io/crates/stackql-mcp) crate embeds that server in a Rust application, either as a sidecar (downloaded and verified at first run) or vendored straight into the Rust application (one self-contained binary). The worked examples are two small agents with the same four parts, model, prompts, context and MCP tools: an SRE assurance sweep over a service's footprint in AWS and Cloudflare (Claude, server as a sidecar) and a FinOps report from Cost Explorer (GPT-5, server vendored into the binary).
+[StackQL](https://github.com/stackql/stackql) treats cloud and SaaS providers as data sources accessed via SQL. Agents doing platform engineering, SRE and audit work need to query, reason about and act on actual running state, not on state files. The StackQL MCP server is the agent interface to that engine, with a small fixed tool surface and safety modes gating writes.  
 
-## Three acts
-
-| Act | Directory | What happens | Needs |
-|---|---|---|---|
-| 1. StackQL primer | [primer/](primer/) | `stackql shell`, `stackql exec` in every output format (to files, from query files, jsonnet-templated), `stackql srv` with `psql` and a Node app (`@stackql/pgwire-lite`), `pystackql` with pandas | `stackql`; no credentials (`node` and `python` for the two apps) |
-| 2. stackql-deploy, Rust native | [stacks/](stacks/) | declare a service's footprint (security group + instance in AWS, A record in Cloudflare) and `build` / `test` / `teardown` it | `stackql-deploy`; AWS and Cloudflare credentials |
-| 3. Embedded MCP in Rust | [embedded/](embedded/) | `sre-agent-sidecar` (Claude, server as a sidecar) sweeps the same footprint: health, exposure, edge, governance; `finops-agent-vendored` (GPT-5, server vendored into the binary) reports month-to-date spend and waste from Cost Explorer. Prompts are markdown compiled in; the loop is rig's | `cargo` 1.88+; `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` |
-
-A GitHub variant of act 2 (`stacks/golden-path`) runs its reads with zero credentials, for people who clone the repo without cloud accounts.
-
-[RUNBOOK.md](RUNBOOK.md) has the exact commands in demo order. [slides/notes.md](slides/notes.md) has the paste-ready text and mermaid for the slides still to be written in the deck.
+The [`stackql-mcp`](https://crates.io/crates/stackql-mcp) crate embeds that server in a Rust application, either as a sidecar (downloaded and verified at first run) or vendored straight into the Rust application (one self-contained binary). The worked examples are two small agents with the same four parts, model, prompts, context and MCP tools: an SRE assurance sweep over a service's footprint in AWS and Cloudflare (Claude, server as a sidecar) and a FinOps report from Cost Explorer (GPT-5, server vendored into the binary).
 
 ## Quick start
 
 ```sh
 git clone https://github.com/stackql/rust-embedded-mcp-with-stackql
 cd rust-embedded-mcp-with-stackql
-cp .env.example .env            # AWS, Cloudflare and Anthropic keys for the main flow; the GitHub variant needs none
-./scripts/check-env.sh          # stackql, stackql-deploy, cargo, psql, jq, node, python3 on PATH?
-./scripts/prewarm.sh            # pull providers, cache the server, build all binaries (do this on good wifi)
+cp .env.example .env            # AWS, Cloudflare, Anthropic and OpenAI keys for the main flow
+set -a; . ./.env; set +a
+for p in aws awscc cloudflare github; do stackql exec "REGISTRY PULL $p"; done
+(cd embedded && cargo build --release)    # both agents; the vendored one fetches the server bundle at build time
 ```
+
+Needs `stackql`, `stackql-deploy`, `cargo` 1.88+ on PATH; `psql`, `jq`, `node` and `python` for the act 1 extras.
 
 Then, from the repo root:
 
 ```sh
-stackql exec -i primer/queries/workflow-runs.iql                   # act 1 (paste blocks in primer/shell.iql, exec.sh, srv.sh)
 set -a; . ./.env; set +a
+stackql exec -i primer/queries/exposure.iql                        # act 1 (paste blocks in primer/shell.iql, exec.sh, srv.sh)
 stackql-deploy build stacks/service-footprint dev --env-file .env  # act 2: SG + instance + DNS record, about 30 s
 ./embedded/target/release/sre-agent-sidecar --check                # act 3: embedded server, providers, tools, no model call
 ./embedded/target/release/sre-agent-sidecar                        # act 3: the SRE sweep (Claude, sidecar server)
-./scripts/drift-footprint.sh && ./embedded/target/release/sre-agent-sidecar   # act 3: drift on both planes, found and explained
+./stacks/service-footprint/drift.sh && ./embedded/target/release/sre-agent-sidecar   # act 3: drift on both planes, found and explained
 ./embedded/target/release/finops-agent-vendored                    # act 3: the FinOps report (GPT-5, vendored server)
 ```
 

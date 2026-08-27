@@ -1,70 +1,126 @@
 -- =============================================================================
 -- Act 1: cloud and SaaS providers as data sources accessed via SQL (stackql shell)
 -- Slides: STACKQL >>, Cloud Providers as Data Sources, How to use StackQL
--- Paste one statement at a time.
--- Prereqs: none for 1.1 to 1.7 (public GitHub data; STACKQL_GITHUB_USERNAME and
--- STACKQL_GITHUB_PASSWORD in .env lift the rate limit from 60/hour to 5000/hour).
--- 1.8 needs AWS_* and CLOUDFLARE_* from .env exported before starting the shell.
+-- Paste one statement at a time. Three providers, two planes: aws (compute,
+-- storage, cost), cloudflare (edge), github (code). Needs AWS_*, CLOUDFLARE_*
+-- and STACKQL_GITHUB_* from .env exported before starting the shell (the
+-- github blocks also work with no credentials). Every query answers in about
+-- a second of API time.
 -- =============================================================================
 
--- 1.1  the provider is a versioned document pulled from the registry
+-- 1.1  providers are versioned documents pulled from the registry
+REGISTRY PULL aws;
+REGISTRY PULL cloudflare;
 REGISTRY PULL github;
 SHOW PROVIDERS;
 
 -- 1.2  discovery: services -> resources -> methods -> fields
-SHOW SERVICES IN github LIKE 'repo%';
-SHOW RESOURCES IN github.repos LIKE '%branch%';
-SHOW EXTENDED METHODS IN github.repos.branches;
-DESCRIBE EXTENDED github.repos.branches;
+SHOW SERVICES IN aws LIKE 'ec%';
+SHOW RESOURCES IN cloudflare.dns LIKE '%record%';
+SHOW EXTENDED METHODS IN aws.ec2.security_group_rules;
+DESCRIBE EXTENDED cloudflare.dns.zones_dns_records;
 
--- 1.3  the estate as rows: repos in the org by visibility and archive state
-SELECT visibility, archived, COUNT(*) AS repos
-FROM github.repos.repos
-WHERE org = 'stackql'
-GROUP BY visibility, archived;
+-- 1.3  compute inventory: JSON columns unpacked with JSON_EXTRACT, dates with
+--      the SQLite built-ins (strftime, julianday)
+SELECT instance_id, instance_type,
+       JSON_EXTRACT(state, '$.name') AS state,
+       public_ip_address AS ip,
+       strftime('%Y-%m-%d', launch_time) AS launched,
+       ROUND(julianday('now') - julianday(launch_time)) AS age_days
+FROM aws.ec2.instances
+WHERE region = 'ap-southeast-2';
 
--- 1.4  ordering and limiting (the subquery keeps ORDER BY ahead of LIMIT)
-SELECT name, stars, forks
+-- 1.4  tags as rows: json_each over a JSON column (the provider wraps lists
+--      in "item"); the filtered provider query goes in a CTE first
+WITH live AS (
+  SELECT instance_id, tags
+  FROM aws.ec2.instances
+  WHERE region = 'ap-southeast-2'
+    AND JSON_EXTRACT(state, '$.name') = 'running'
+)
+SELECT instance_id,
+       JSON_EXTRACT(t.value, '$.key') AS tag,
+       JSON_EXTRACT(t.value, '$.value') AS value
+FROM live, json_each(live.tags, '$.item') t;
+
+-- 1.5  exposure: which security group rules let the world in on risky ports
+SELECT group_id, ip_protocol, from_port, to_port, cidr_ipv_4
+FROM aws.ec2.security_group_rules
+WHERE region = 'ap-southeast-2'
+  AND is_egress = 0
+  AND cidr_ipv_4 = '0.0.0.0/0'
+  AND from_port IN (22, 3389, 5432);
+
+-- 1.6  storage waste with a window function: every volume, and the GiB in
+--      its state alongside (available = attached to nothing, still billing)
+SELECT volume_id, size, volume_type, state,
+       SUM(size) OVER (PARTITION BY state) AS gib_in_state
+FROM aws.ec2.volumes
+WHERE region = 'ap-southeast-2';
+
+-- 1.7  the edge: zones with the plan unpacked from JSON, numbered by age
+SELECT name, status,
+       JSON_EXTRACT(plan, '$.name') AS plan,
+       json_array_length(name_servers) AS ns,
+       ROW_NUMBER() OVER (ORDER BY created_on) AS nth
+FROM cloudflare.zones.zones;
+
+-- 1.8  a zone's records by type (JOIN zone -> records, GROUP_CONCAT)
+SELECT r.type, COUNT(*) AS records, GROUP_CONCAT(r.name, ', ') AS names
+FROM cloudflare.zones.zones z
+JOIN cloudflare.dns.zones_dns_records r ON r.zone_id = z.id
+WHERE z.name = 'stackql.xyz'
+GROUP BY r.type;
+
+-- 1.9  the code: the org, and which branches of a repo are protected
+--      (booleans compare as 0/1)
+SELECT login, public_repos, followers, substr(created_at, 1, 4) AS since
+FROM github.orgs.orgs
+WHERE org = 'stackql';
+
+SELECT name, protected
+FROM github.repos.branches
+WHERE owner = 'stackql' AND repo = 'stackql' AND protected = 1;
+
+-- 1.10 release cadence: a window function ranks releases newest first, the
+--      outer query limits (ORDER BY + LIMIT in one SELECT limits first)
+SELECT tag_name, published, nth
 FROM (
-  SELECT name, stargazers_count AS stars, forks_count AS forks
-  FROM github.repos.repos
-  WHERE org = 'stackql' AND archived = 0
-  ORDER BY stargazers_count DESC
-) t
-LIMIT 5;
-
--- 1.5  a JOIN across two resources (two API surfaces, one query):
---      is the default branch of each key repo protected?
---      (the IN list keeps the fan-out to three calls, one per repo)
-SELECT b.repo, b.name AS branch, b.protected
-FROM github.repos.branches b
-JOIN github.repos.repos r ON r.name = b.repo
-WHERE r.org = 'stackql'
-  AND b.owner = 'stackql'
-  AND b.repo IN ('stackql', 'stackql-deploy', 'pystackql')
-  AND b.name = r.default_branch;
-
--- 1.6  live operational signal (the SRE angle): the latest CI runs
-SELECT name, head_branch AS branch, conclusion, substr(created_at, 1, 10) AS day
-FROM (
-  SELECT name, head_branch, conclusion, created_at
-  FROM github.actions.workflow_runs
-  WHERE owner = 'stackql' AND repo = 'stackql'
-  ORDER BY created_at DESC
-) t
-LIMIT 5;
-
--- 1.7  what shipped: the latest releases
-SELECT tag_name, substr(published_at, 1, 10) AS published
-FROM (
-  SELECT tag_name, published_at
+  SELECT tag_name, substr(published_at, 1, 10) AS published,
+         RANK() OVER (ORDER BY published_at DESC) AS nth
   FROM github.repos.releases
   WHERE owner = 'stackql' AND repo = 'stackql'
-  ORDER BY published_at DESC
 ) t
-LIMIT 3;
+LIMIT 5;
 
--- 1.8  two planes in one statement (a cross-provider JOIN): which EC2 instance
+-- 1.11 FinOps: month-to-date spend by service from Cost Explorer; the
+--      parameters are JSON in WHERE, the answer is JSON, json_each unpacks it
+--      (End is exclusive: the first of next month covers the whole month)
+WITH ce AS (
+  SELECT results_by_time
+  FROM aws.ce.cost_and_usages
+  WHERE region = 'us-east-1'
+    AND TimePeriod = '{"Start":"2026-08-01","End":"2026-09-01"}'
+    AND Granularity = 'MONTHLY'
+    AND Metrics = '["UnblendedCost"]'
+    AND GroupBy = '[{"Type":"DIMENSION","Key":"SERVICE"}]'
+)
+SELECT JSON_EXTRACT(g.value, '$.Keys[0]') AS service,
+       ROUND(JSON_EXTRACT(g.value, '$.Metrics.UnblendedCost.Amount'), 2) AS usd
+FROM ce, json_each(ce.results_by_time, '$[0].Groups') g
+ORDER BY usd DESC;
+
+-- 1.12 two planes in one result set: compute and edge as one inventory
+SELECT 'aws' AS plane, instance_id AS name, JSON_EXTRACT(state, '$.name') AS state
+FROM aws.ec2.instances
+WHERE region = 'ap-southeast-2'
+UNION ALL
+SELECT 'cloudflare', r.name, r.type
+FROM cloudflare.zones.zones z
+JOIN cloudflare.dns.zones_dns_records r ON r.zone_id = z.id
+WHERE z.name = 'stackql.xyz';
+
+-- 1.13 two planes in one statement (a cross-provider JOIN): which EC2 instance
 --      does each A record in the zone point at? The zone is looked up by name
 --      and joined to its records in a CTE (a flat three-table JOIN does not
 --      plan; the CTE does), then the CTE is joined to EC2. Needs AWS and
@@ -84,17 +140,17 @@ WHERE i.region = 'ap-southeast-2';
 
 -- =============================================================================
 -- Mutations (same verbs; run only if you want to show a write in the shell,
--- otherwise these are what stackql-deploy and steward run for you in acts 2
--- and 3). Needs a token in STACKQL_GITHUB_PASSWORD with write access to the
--- repo. The values are the repo's golden state (stacks/golden-path), so
--- running them leaves it converged.
+-- otherwise these are what stackql-deploy runs for you in act 2). Needs a
+-- token in STACKQL_GITHUB_PASSWORD with write access to the repo. The values
+-- are the repo's golden state (stacks/golden-path), so running them leaves it
+-- converged.
 -- =============================================================================
 
 -- a label is an INSERT ... SELECT (the provider names the required columns)
 INSERT INTO github.issues.labels (owner, repo, name, color, description)
 SELECT 'stackql', 'rust-embedded-mcp-with-stackql', 'security', 'b60205', 'Security posture or vulnerability';
 
--- and a DELETE (steward fix or stackql-deploy build puts it back)
+-- and a DELETE (stackql-deploy build stacks/golden-path puts it back)
 DELETE FROM github.issues.labels
 WHERE owner = 'stackql' AND repo = 'rust-embedded-mcp-with-stackql' AND name = 'security';
 

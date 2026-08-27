@@ -2,15 +2,20 @@
 
 Exact commands in demo order. Everything runs from the repo root in one shell with `.env` exported (`set -a; . ./.env; set +a`, which the scripts also do for themselves; `stackql-deploy` needs it exported because the stackql server it spawns reads provider credentials from the process environment). Lines starting with `#` are the one line of intent. Time budget: 45 minutes including slides; timings below are the demo portions.
 
-Providers on stage: `aws` + `awscc` (compute) and `cloudflare` (edge) for acts 2 and 3, `github` (public reads, no credentials needed) for act 1. The GitHub golden-path variant (`stacks/golden-path`, `steward --policy golden-path`) is the zero-credential fallback and is not in the main flow.
+Providers on stage: `aws` (compute, storage, Cost Explorer; `awscc` for the act 2 writes) and `cloudflare` (edge) in all three acts, `github` (code) in act 1. The GitHub golden-path stack (`stacks/golden-path`) is the zero-credential fallback and is not in the main flow.
 
 ## Before walking on stage
 
 ```sh
 cd rust-embedded-mcp-with-stackql
 set -a; . ./.env; set +a
-./scripts/check-env.sh
-./scripts/prewarm.sh                                        # night before, on good wifi
+# night before, on good wifi: everything below leaves the machine able to start every act offline
+for p in aws awscc cloudflare github; do stackql exec "REGISTRY PULL $p"; done   # providers in ~/.stackql
+(cd embedded && cargo build --release)                              # both agents; finops-agent-vendored's build.rs fetches the bundle
+./embedded/target/release/sre-agent-sidecar --check                 # sidecar server downloaded, verified, cached
+./embedded/target/release/finops-agent-vendored --check             # vendored server extracted from the binary
+(cd primer/pgwire-lite-app && npm install)                          # the act 1 Node app's deps
+python -c "import pystackql, pandas"                                # the act 1 Python app's deps (pip install pystackql pandas)
 stackql-deploy build stacks/service-footprint dev --env-file .env    # estate converged (27 s from nothing, ~40 s to re-converge)
 stackql-deploy build stacks/golden-path dev --env-file .env          # the GitHub variant converged too
 stackql-deploy build stacks/aws-webserver dev --env-file .env        # native aws variant, second row for the act 1 cross-provider query (~25 s)
@@ -21,7 +26,7 @@ clear
 
 Checklist the rehearsal keeps catching:
 
-- [ ] `stackql-deploy`, `psql`, `node` and `python` on PATH (check-env.sh says so); `primer/pgwire-lite-app/node_modules` present and `pystackql` importable (prewarm.sh does both)
+- [ ] `stackql`, `stackql-deploy`, `psql`, `jq`, `node` and `python` on PATH; the block above ran clean
 - [ ] `.env` exported in BOTH tabs, not just passed as `--env-file`
 - [ ] GitHub token in `.env` is authorised for the `stackql` org (a fine-grained token scoped elsewhere reads fine but gets 403/404 on writes)
 - [ ] `curl http://rust-demo.stackql.xyz/` returns the page (instance takes ~90 s after a fresh build to serve)
@@ -38,34 +43,38 @@ Slides: STACKQL >>, Cloud Providers as Data Sources, How to use StackQL. `primer
 stackql shell
 ```
 
-Paste in order from `primer/shell.iql` (1.1 to 1.6; 1.7 releases and 1.8 cross-provider if there is time):
+Paste in order from `primer/shell.iql` (every query is about a second of API time): 1.1 to 1.4, then 1.6 (window), 1.8 (edge), 1.11 (FinOps), 1.12 (cross-plane); 1.5, 1.7, 1.9 and 1.10 if there is time.
 
 ```sql
+REGISTRY PULL aws;
+REGISTRY PULL cloudflare;
 REGISTRY PULL github;
 SHOW PROVIDERS;
-SHOW SERVICES IN github LIKE 'repo%';
-SHOW RESOURCES IN github.repos LIKE '%branch%';
-SHOW EXTENDED METHODS IN github.repos.branches;
-DESCRIBE EXTENDED github.repos.branches;
-SELECT visibility, archived, COUNT(*) AS repos FROM github.repos.repos WHERE org = 'stackql' GROUP BY visibility, archived;
-SELECT name, stars, forks FROM (SELECT name, stargazers_count AS stars, forks_count AS forks FROM github.repos.repos WHERE org = 'stackql' AND archived = 0 ORDER BY stargazers_count DESC) t LIMIT 5;
-SELECT b.repo, b.name AS branch, b.protected FROM github.repos.branches b JOIN github.repos.repos r ON r.name = b.repo WHERE r.org = 'stackql' AND b.owner = 'stackql' AND b.repo IN ('stackql', 'stackql-deploy', 'pystackql') AND b.name = r.default_branch;
-SELECT name, head_branch AS branch, conclusion, substr(created_at, 1, 10) AS day FROM (SELECT name, head_branch, conclusion, created_at FROM github.actions.workflow_runs WHERE owner = 'stackql' AND repo = 'stackql' ORDER BY created_at DESC) t LIMIT 5;
+SHOW SERVICES IN aws LIKE 'ec%';
+SHOW RESOURCES IN cloudflare.dns LIKE '%record%';
+SHOW EXTENDED METHODS IN aws.ec2.security_group_rules;
+DESCRIBE EXTENDED cloudflare.dns.zones_dns_records;
+SELECT instance_id, instance_type, JSON_EXTRACT(state, '$.name') AS state, public_ip_address AS ip, strftime('%Y-%m-%d', launch_time) AS launched, ROUND(julianday('now') - julianday(launch_time)) AS age_days FROM aws.ec2.instances WHERE region = 'ap-southeast-2';
+WITH live AS (SELECT instance_id, tags FROM aws.ec2.instances WHERE region = 'ap-southeast-2' AND JSON_EXTRACT(state, '$.name') = 'running') SELECT instance_id, JSON_EXTRACT(t.value, '$.key') AS tag, JSON_EXTRACT(t.value, '$.value') AS value FROM live, json_each(live.tags, '$.item') t;
+SELECT volume_id, size, volume_type, state, SUM(size) OVER (PARTITION BY state) AS gib_in_state FROM aws.ec2.volumes WHERE region = 'ap-southeast-2';
+SELECT r.type, COUNT(*) AS records, GROUP_CONCAT(r.name, ', ') AS names FROM cloudflare.zones.zones z JOIN cloudflare.dns.zones_dns_records r ON r.zone_id = z.id WHERE z.name = 'stackql.xyz' GROUP BY r.type;
+WITH ce AS (SELECT results_by_time FROM aws.ce.cost_and_usages WHERE region = 'us-east-1' AND TimePeriod = '{"Start":"2026-08-01","End":"2026-09-01"}' AND Granularity = 'MONTHLY' AND Metrics = '["UnblendedCost"]' AND GroupBy = '[{"Type":"DIMENSION","Key":"SERVICE"}]') SELECT JSON_EXTRACT(g.value, '$.Keys[0]') AS service, ROUND(JSON_EXTRACT(g.value, '$.Metrics.UnblendedCost.Amount'), 2) AS usd FROM ce, json_each(ce.results_by_time, '$[0].Groups') g ORDER BY usd DESC;
+SELECT 'aws' AS plane, instance_id AS name, JSON_EXTRACT(state, '$.name') AS state FROM aws.ec2.instances WHERE region = 'ap-southeast-2' UNION ALL SELECT 'cloudflare', r.name, r.type FROM cloudflare.zones.zones z JOIN cloudflare.dns.zones_dns_records r ON r.zone_id = z.id WHERE z.name = 'stackql.xyz';
 ```
 
 Ctrl-D to leave the shell.
 
 ```sh
 # 2. same engine, non-interactive: formats, files, query files, jsonnet vars, dry run
-stackql exec --output json "SELECT name, stars, forks FROM (SELECT name, stargazers_count AS stars, forks_count AS forks FROM github.repos.repos WHERE org = 'stackql' AND archived = 0 ORDER BY stargazers_count DESC) t LIMIT 5" | jq .
-stackql exec --output csv -f repos.psv -H -d="|" "SELECT name, visibility, archived FROM github.repos.repos WHERE org = 'stackql'" && head -5 repos.psv
-stackql exec -i primer/queries/workflow-runs.iql --output csv
-stackql exec -i primer/queries/branch-protection.iql --iqldata primer/queries/vars.jsonnet --var org=$GITHUB_ORG --output csv
-stackql exec -i primer/queries/branch-protection.iql --iqldata primer/queries/vars.jsonnet --var org=$GITHUB_ORG --dryrun --output text
+stackql exec --output json "SELECT name, status, JSON_EXTRACT(plan, '$.name') AS plan FROM cloudflare.zones.zones" | jq .
+stackql exec --output csv -f records.psv -H -d="|" "SELECT r.type, r.name, r.content FROM cloudflare.zones.zones z JOIN cloudflare.dns.zones_dns_records r ON r.zone_id = z.id WHERE z.name = '$DEMO_DOMAIN'" && cat records.psv
+stackql exec -i primer/queries/exposure.iql --output csv
+stackql exec -i primer/queries/finops.iql --iqldata primer/queries/vars.jsonnet --var month=$(date +%Y-%m) --output csv
+stackql exec -i primer/queries/finops.iql --iqldata primer/queries/vars.jsonnet --var month=$(date +%Y-%m) --dryrun --output text
 
 # 3. same engine, Postgres wire protocol: psql, then a Node app on the same socket
 nohup stackql srv --pgsrv.port 5466 > stackql-srv.log 2>&1 &
-psql -h localhost -p 5466 -U stackql -d stackql -c "SELECT visibility, archived, COUNT(*) AS repos FROM github.repos.repos WHERE org = 'stackql' GROUP BY visibility, archived"
+psql -h localhost -p 5466 -U stackql -d stackql -c "SELECT instance_id, instance_type, JSON_EXTRACT(state, '$.name') AS state, public_ip_address AS ip FROM aws.ec2.instances WHERE region = '$AWS_REGION'"
 node primer/pgwire-lite-app/app.js
 pkill -f "stackql srv"
 
@@ -116,7 +125,7 @@ cat embedded/sre-agent-sidecar/src/main.rs
 # the prompts are data: persona and StackQL context, then the sweep
 cat embedded/sre-agent-sidecar/prompts/task.md
 
-# cache before (empty on a clean machine; prewarmed here), then the preflight: server, providers, 16 tools, no model call
+# cache before (empty on a clean machine; filled by the pre-flight block here), then the preflight: server, providers, 16 tools, no model call
 ls ~/.stackql/mcp-server-bin/
 sre-agent-sidecar --check
 
@@ -130,7 +139,7 @@ Introduce drift, in the `spare` tab or on stage (each is one StackQL statement, 
 
 ```sh
 # strip the owner tag, open 22 to the world, delete the A record, add a dangling record
-./scripts/drift-footprint.sh tag ssh edge dangling
+./stacks/service-footprint/drift.sh tag ssh edge dangling
 
 # the sweep again (~90 s): three ATTENTIONs (exposure, edge with the dangling record, governance), each with the SQL that would fix it (not run: read_only)
 sre-agent-sidecar
@@ -170,10 +179,10 @@ Slide: STACKQL >> (thank you). The ask: `cargo add stackql-mcp`, star [stackql/s
 
 ## Fallbacks
 
-- No wifi: every binary starts offline after `prewarm.sh`; acts 1 to 3 need AWS, Cloudflare, Anthropic and OpenAI reachable to answer. Switch to the recording and narrate.
+- No wifi: every binary starts offline after the pre-flight block; acts 1 to 3 need AWS, Cloudflare, Anthropic and OpenAI reachable to answer. Switch to the recording and narrate.
 - Anthropic slow or down: `sre-agent-sidecar --model claude-sonnet-5`, or run the sweep's checks deterministically with `stackql-deploy test stacks/service-footprint dev --env-file .env`. OpenAI slow or down: `finops-agent-vendored --model gpt-5-mini`, or the Cost Explorer query from `embedded/finops-agent-vendored/prompts/system.md` straight through `stackql exec`.
 - Wrong state at the start of act 3: `stackql-deploy build stacks/service-footprint dev --env-file .env`.
 - GitHub rate limit in act 1 (HTTP 403): `.env` has `STACKQL_GITHUB_USERNAME` / `STACKQL_GITHUB_PASSWORD`, make sure it is exported.
 - Model wanders: `sre-agent-sidecar --max-turns 12`, or a narrower question as the argument.
-- A terminated instance still shows its tags for up to an hour after a teardown; the task tells the agent to ignore terminated instances, and `drift-footprint.sh` only targets a running one.
+- A terminated instance still shows its tags for up to an hour after a teardown; the task tells the agent to ignore terminated instances, and `drift.sh` only targets a running one.
 - GitHub writes fail with 403/404 but reads work: the token is not authorised for the `stackql` org; use a classic PAT with `repo` scope or a fine-grained token granted on the org.

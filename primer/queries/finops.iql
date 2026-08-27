@@ -1,0 +1,16 @@
+-- month-to-date spend by service from Cost Explorer
+-- the parameters are JSON in WHERE, the answer is JSON, json_each unpacks it;
+-- the billing window is rendered from vars.jsonnet (--var month=YYYY-MM)
+WITH ce AS (
+  SELECT results_by_time
+  FROM aws.ce.cost_and_usages
+  WHERE region = 'us-east-1'
+    AND TimePeriod = '{"Start":"{{ .period.start }}","End":"{{ .period.end }}"}'
+    AND Granularity = '{{ .granularity }}'
+    AND Metrics = '["UnblendedCost"]'
+    AND GroupBy = '[{"Type":"DIMENSION","Key":"SERVICE"}]'
+)
+SELECT JSON_EXTRACT(g.value, '$.Keys[0]') AS service,
+       ROUND(JSON_EXTRACT(g.value, '$.Metrics.UnblendedCost.Amount'), 2) AS usd
+FROM ce, json_each(ce.results_by_time, '$[0].Groups') g
+ORDER BY usd DESC;

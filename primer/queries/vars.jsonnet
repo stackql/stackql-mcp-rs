@@ -1,12 +1,15 @@
-// config for branch-protection.iql
-// external var 'org' supplied with --var, e.g. --var org=stackql
-local org = std.extVar('org');
-
-// the repos whose default branch must be protected, rendered as a SQL IN list
-// (the JOIN fans out to one API call per repo, so keep it short)
-local key_repos = ['stackql', 'stackql-deploy', 'pystackql'];
+// config for finops.iql
+// external var 'month' (YYYY-MM) supplied with --var, e.g. --var month=2026-08
+local month = std.extVar('month');
+local year = std.parseInt(std.split(month, '-')[0]);
+local mon = std.parseInt(std.split(month, '-')[1]);
+// Cost Explorer's End is exclusive, so the window runs to the first of next month
+local next = if mon == 12 then '%d-01-01' % (year + 1) else '%d-%02d-01' % [year, mon + 1];
 
 {
-  org: org,
-  key_repos: "('" + std.join("', '", key_repos) + "')",
+  period: {
+    start: month + '-01',
+    end: next,
+  },
+  granularity: 'MONTHLY',
 }

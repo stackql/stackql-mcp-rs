@@ -1,0 +1,8 @@
+-- security group rules that let the world in on risky ports (used by the exec.sh -i example)
+-- region is fixed here; finops.iql shows the templated form
+SELECT group_id, ip_protocol, from_port, to_port, cidr_ipv_4
+FROM aws.ec2.security_group_rules
+WHERE region = 'ap-southeast-2'
+  AND is_egress = 0
+  AND cidr_ipv_4 = '0.0.0.0/0'
+  AND from_port IN (22, 3389, 5432);

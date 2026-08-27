@@ -23,9 +23,9 @@ stackql-deploy.log
 *.zip
 
 # Act 1 output files (primer/exec.sh) and the server log (primer/srv.sh)
-/repos.jsonl
-/runs.csv
-/repos.psv
+/exposure.jsonl
+/volumes.csv
+/records.psv
 /stackql-srv.log
 
 # Act 1 reference apps

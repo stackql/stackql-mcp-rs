@@ -58,7 +58,7 @@ Declares what a repository on our golden path looks like:
 | `default_branch_ruleset` | a ruleset on the default branch that blocks deletion and force pushes |
 | `conformance` | a `query` resource: one row summarising the checks, exported as `golden_path_ok` |
 
-It targets `GITHUB_ORG` / `GITHUB_REPO` from `.env` (defaults in `.env.example` point at this repo). `scripts/drift.sh` introduces drift for a re-converge demo. Needs `STACKQL_GITHUB_USERNAME` / `STACKQL_GITHUB_PASSWORD` in `.env` with a token that can administer the target repo for `build`; `--dry-run` and reads need no credentials.
+It targets `GITHUB_ORG` / `GITHUB_REPO` from `.env` (defaults in `.env.example` point at this repo). To show a re-converge, drift it by hand (`DELETE FROM github.issues.labels WHERE owner = 'stackql' AND repo = 'rust-embedded-mcp-with-stackql' AND name = 'security'`, or `REPLACE github.repos.topics SET names = '["stackql","rust","mcp"]' WHERE owner = 'stackql' AND repo = 'rust-embedded-mcp-with-stackql'`) and run `build` again. Needs `STACKQL_GITHUB_USERNAME` / `STACKQL_GITHUB_PASSWORD` in `.env` with a token that can administer the target repo for `build`; `--dry-run` and reads need no credentials.
 
 ```sh
 stackql-deploy info
