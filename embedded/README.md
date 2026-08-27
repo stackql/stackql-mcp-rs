@@ -20,6 +20,8 @@ cargo build --release             # finops-agent-vendored's build.rs fetches the
 ./target/release/sre-agent-sidecar                  # the sweep (prompts/task.md)
 ./target/release/sre-agent-sidecar "Which security groups in ap-southeast-2 allow port 22 from anywhere?"
 
+# ~/.stackql/mcp-server-bin/0.10.605/
+
 ./target/release/finops-agent-vendored --check
 ./target/release/finops-agent-vendored               # the report
 ./target/release/finops-agent-vendored "What did EC2 cost us last month, by usage type?"
